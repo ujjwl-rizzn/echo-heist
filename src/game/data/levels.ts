@@ -278,7 +278,7 @@ export const levels: LevelDefinition[] = [
     world: sharedWorld,
     spawn: point(126, 560),
     walls: [rect(420, 98, 40, 206), rect(420, 416, 40, 206), rect(826, 98, 40, 206), rect(826, 416, 40, 206)],
-    doors: [{ id: "cross-door", x: 430, y: 316, w: 20, h: 106, channel: "cross-door" }],
+    doors: [{ id: "cross-door", x: 430, y: 304, w: 20, h: 112, channel: "cross-door" }],
     guards: [
       {
         id: "guard-3",
@@ -331,7 +331,7 @@ export const levels: LevelDefinition[] = [
     world: sharedWorld,
     spawn: point(132, 566),
     walls: [rect(290, 136, 38, 466), rect(612, 136, 38, 224), rect(612, 456, 38, 146), rect(914, 98, 38, 504)],
-    doors: [{ id: "parallax-door", x: 622, y: 364, w: 20, h: 98, channel: "parallax-door" }],
+    doors: [{ id: "parallax-door", x: 622, y: 360, w: 20, h: 96, channel: "parallax-door" }],
     guards: [
       {
         id: "guard-4",
