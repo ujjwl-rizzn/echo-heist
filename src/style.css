@@ -1,0 +1,1034 @@
+@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@700;800&family=Rajdhani:wght@500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap");
+
+:root {
+  color-scheme: dark;
+  --bg0: #050611;
+  --bg1: #071120;
+  --panel: rgba(10, 16, 30, 0.76);
+  --panel-strong: rgba(8, 12, 24, 0.88);
+  --panel-border: rgba(126, 246, 255, 0.18);
+  --text: #eef8ff;
+  --muted: #8ba5bf;
+  --primary: #7ef6ff;
+  --secondary: #ff3a88;
+  --accent: #ffd76f;
+  --danger: #ff556e;
+  --success: #71ffb7;
+  --shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+  --glow-primary: 0 0 24px rgba(126, 246, 255, 0.38);
+  --glow-secondary: 0 0 32px rgba(255, 58, 136, 0.28);
+  --radius-lg: 24px;
+  --radius-md: 18px;
+  --radius-sm: 12px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top, rgba(28, 46, 83, 0.55), transparent 28%),
+    radial-gradient(circle at 80% 15%, rgba(255, 58, 136, 0.18), transparent 22%),
+    linear-gradient(180deg, #050611 0%, #071120 100%);
+  color: var(--text);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.04) 0%,
+      transparent 25%,
+      transparent 75%,
+      rgba(255, 255, 255, 0.03) 100%
+    ),
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.025) 0 1px,
+      transparent 1px 4px
+    );
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.app-shell[data-scanlines-off]::before {
+  display: none;
+}
+
+.game-root,
+.ui-root {
+  position: absolute;
+  inset: 0;
+}
+
+.game-root canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ui-root {
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ui-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.ui-screen-layer,
+.ui-hud-layer,
+.ui-controls-layer {
+  pointer-events: none;
+}
+
+.screen-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(20px, 4vw, 48px);
+  overflow: auto;
+  pointer-events: auto;
+}
+
+.screen-card,
+.hud-panel,
+.touch-button,
+.level-card,
+.form-card {
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.screen-card {
+  position: relative;
+  width: min(1080px, 100%);
+  max-height: min(calc(100dvh - 32px), 940px);
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, rgba(15, 22, 40, 0.94), rgba(8, 12, 24, 0.92)),
+    radial-gradient(circle at top right, rgba(126, 246, 255, 0.08), transparent 40%);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.screen-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(120deg, rgba(126, 246, 255, 0.08), transparent 32%),
+    radial-gradient(circle at 85% 15%, rgba(255, 58, 136, 0.12), transparent 20%);
+  pointer-events: none;
+}
+
+.screen-card-inner {
+  position: relative;
+  display: grid;
+  gap: 24px;
+  padding: clamp(28px, 4vw, 40px);
+  min-height: 0;
+  overflow: auto;
+}
+
+.title-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.eyebrow {
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 0.38em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.game-title {
+  margin: 0;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: clamp(2.8rem, 8vw, 5.8rem);
+  line-height: 0.92;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-shadow: var(--glow-primary), var(--glow-secondary);
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--muted);
+  font-size: clamp(0.95rem, 2vw, 1.12rem);
+  line-height: 1.5;
+}
+
+.menu-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(260px, 1fr);
+  gap: 24px;
+}
+
+.button-grid,
+.stack,
+.toolbar {
+  display: grid;
+  gap: 12px;
+}
+
+.button,
+.secondary-button,
+.ghost-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.button {
+  background: linear-gradient(135deg, rgba(126, 246, 255, 0.16), rgba(126, 246, 255, 0.06));
+  border-color: rgba(126, 246, 255, 0.35);
+  color: var(--text);
+  box-shadow: var(--glow-primary);
+}
+
+.secondary-button {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.ghost-button {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+.button:hover,
+.secondary-button:hover,
+.ghost-button:hover,
+.level-card:hover,
+.touch-button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(126, 246, 255, 0.38);
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.stat-tile,
+.info-tile {
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tile-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.tile-value {
+  margin-top: 8px;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 1.3rem;
+}
+
+.hud-shell {
+  position: absolute;
+  inset: 0;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+
+.hud-topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hud-chip {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(10, 16, 30, 0.82), rgba(5, 8, 18, 0.78));
+  border: 1px solid rgba(126, 246, 255, 0.16);
+  box-shadow: var(--shadow);
+}
+
+.hud-chip small {
+  display: block;
+  color: var(--muted);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.62rem;
+}
+
+.hud-chip strong {
+  display: block;
+  margin-top: 0;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 1rem;
+}
+
+.hud-chip--mission {
+  flex: 0 1 320px;
+  max-width: min(32vw, 320px);
+}
+
+.hud-chip--status {
+  flex: 0 0 min(20vw, 184px);
+  width: min(20vw, 184px);
+  display: grid;
+  gap: 6px;
+}
+
+.hud-chipline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hud-level {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 74%;
+}
+
+.hud-time {
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.hud-objective {
+  margin-top: 4px;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.08;
+}
+
+.hud-trace {
+  margin-top: 6px;
+  color: var(--accent);
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hud-hint {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.32;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.hud-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hud-stats-inline {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  flex: 1 1 auto;
+}
+
+.hud-stat-pill {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.hud-charge-row {
+  display: grid;
+  gap: 6px;
+}
+
+.hud-breach {
+  color: var(--accent);
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+}
+
+.hud-pause-button {
+  width: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: 12px;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+}
+
+.hud-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hud-meter {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.hud-meter-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), #d2fbff);
+  box-shadow: var(--glow-primary);
+  transition: width 160ms ease;
+}
+
+.hud-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rank-emblem {
+  width: 102px;
+  height: 102px;
+  display: grid;
+  place-items: center;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top, rgba(126, 246, 255, 0.18), transparent 55%),
+    linear-gradient(180deg, rgba(14, 22, 42, 0.95), rgba(7, 10, 18, 0.96));
+  border: 1px solid rgba(126, 246, 255, 0.24);
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 2.6rem;
+  text-shadow: var(--glow-primary);
+}
+
+.level-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.level-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.level-card.locked {
+  opacity: 0.48;
+  filter: saturate(0.7);
+}
+
+.level-card-title {
+  margin: 0;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 1.12rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(126, 246, 255, 0.08);
+  border: 1px solid rgba(126, 246, 255, 0.12);
+  color: var(--text);
+  font-size: 0.84rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.form-card {
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.form-card label {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.form-card input,
+.form-card select {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+}
+
+.touch-shell {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding:
+    18px max(18px, env(safe-area-inset-right))
+    max(18px, calc(env(safe-area-inset-bottom) + 18px))
+    max(18px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.touch-joystick {
+  width: min(34vw, 160px);
+  height: min(34vw, 160px);
+  position: relative;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(126, 246, 255, 0.12), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(126, 246, 255, 0.16);
+  pointer-events: auto;
+}
+
+.touch-joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin-left: -27px;
+  margin-top: -27px;
+  border-radius: 50%;
+  background: rgba(126, 246, 255, 0.18);
+  border: 1px solid rgba(126, 246, 255, 0.4);
+  box-shadow: var(--glow-primary);
+  transition: transform 80ms linear;
+}
+
+.touch-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(82px, 110px));
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.touch-button {
+  min-height: 82px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(12, 18, 32, 0.88), rgba(7, 9, 18, 0.84));
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.84rem;
+}
+
+.touch-button.primary {
+  border-color: rgba(126, 246, 255, 0.3);
+  box-shadow: var(--glow-primary);
+}
+
+.touch-button.secondary {
+  border-color: rgba(255, 58, 136, 0.24);
+  box-shadow: var(--glow-secondary);
+}
+
+.mini-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.flash-alarm {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle, rgba(255, 58, 108, 0.14), rgba(255, 58, 108, 0.02));
+  mix-blend-mode: screen;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.flash-alarm.active {
+  opacity: 1;
+  animation: alarmPulse 680ms ease-in-out 2;
+}
+
+@keyframes alarmPulse {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 900px) {
+  .menu-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hud-chip--mission {
+    max-width: min(46vw, 260px);
+  }
+
+  .hud-chip--status {
+    width: 148px;
+    flex-basis: 148px;
+  }
+}
+
+@media (max-width: 640px) {
+  .screen-wrap {
+    padding: 12px;
+  }
+
+  .screen-card-inner {
+    padding: 22px;
+    gap: 18px;
+  }
+
+  .game-title {
+    font-size: clamp(2.2rem, 12vw, 4rem);
+  }
+
+  .info-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hud-shell {
+    padding:
+      max(10px, env(safe-area-inset-top))
+      max(10px, env(safe-area-inset-right))
+      max(10px, env(safe-area-inset-bottom))
+      max(10px, env(safe-area-inset-left));
+  }
+
+  .hud-topbar {
+    gap: 8px;
+  }
+
+  .hud-chip {
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+
+  .hud-chip--mission {
+    max-width: min(54vw, 196px);
+  }
+
+  .hud-chip--status {
+    width: 112px;
+    flex-basis: 112px;
+    gap: 6px;
+  }
+
+  .hud-stats-inline {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .hud-chip small {
+    font-size: 0.56rem;
+  }
+
+  .hud-objective {
+    font-size: 0.76rem;
+  }
+
+  .hud-trace {
+    font-size: 0.64rem;
+  }
+
+  .hud-meter {
+    height: 6px;
+  }
+
+  .hud-pause-button {
+    width: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    font-size: 0.68rem;
+  }
+
+  .touch-actions {
+    grid-template-columns: repeat(2, minmax(76px, 1fr));
+  }
+}
+
+.ui-panel {
+  width: min(92vw, 432px);
+  max-height: min(88vh, 860px);
+  padding: 20px;
+  border-radius: 24px;
+  overflow: auto;
+  background:
+    linear-gradient(180deg, rgba(15, 24, 50, 0.94), rgba(9, 14, 30, 0.96)),
+    rgba(11, 18, 38, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 22px 48px rgba(0, 0, 0, 0.45);
+}
+
+.ui-panel--wide {
+  width: min(92vw, 468px);
+}
+
+.ui-panel__title {
+  margin: 0 0 6px;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: clamp(1.5rem, 5vw, 2.2rem);
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ui-panel__subtitle {
+  margin: 0 0 18px;
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.ui-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ui-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.stat-card,
+.mission-card,
+.skin-card,
+.future-card {
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.stat-card__label,
+.mission-card__label,
+.skin-card__label,
+.future-card__label {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stat-card__value,
+.skin-card__value {
+  margin: 0;
+  font-size: 1.38rem;
+  font-weight: 700;
+}
+
+.button-row {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.button-row--double {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ui-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 16px;
+  cursor: pointer;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  background: linear-gradient(135deg, rgba(126, 246, 255, 0.16), rgba(126, 246, 255, 0.06));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 24px rgba(0, 0, 0, 0.24);
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    filter 150ms ease;
+}
+
+.ui-button:hover,
+.ui-button:focus-visible {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 14px 30px rgba(126, 246, 255, 0.12);
+  filter: brightness(1.06);
+  outline: none;
+}
+
+.ui-button:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.ui-button--primary {
+  background: linear-gradient(135deg, rgba(126, 246, 255, 0.24), rgba(107, 140, 255, 0.24));
+  box-shadow: var(--glow-primary);
+}
+
+.ui-button--accent {
+  background: linear-gradient(135deg, rgba(255, 58, 136, 0.28), rgba(255, 215, 111, 0.2));
+  box-shadow: var(--glow-secondary);
+}
+
+.ui-button--ghost {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ui-button--small {
+  padding: 10px 12px;
+  font-size: 0.86rem;
+  border-radius: 14px;
+}
+
+.ui-button[disabled] {
+  cursor: default;
+  opacity: 0.46;
+  transform: none;
+  box-shadow: none;
+}
+
+.settings-grid,
+.tips-list,
+.results-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.setting-row,
+.tips-item,
+.results-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.setting-row__text,
+.tips-item__text {
+  display: grid;
+  gap: 4px;
+}
+
+.setting-row__title,
+.tips-item__title,
+.results-item__label {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+.setting-row__copy,
+.tips-item__copy,
+.results-item__value,
+.mission-card__copy,
+.future-card__copy,
+.skin-card__copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.results-item__value {
+  color: var(--text);
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 0.96rem;
+}
+
+.switch-pill {
+  min-width: 84px;
+}
+
+.skin-grid,
+.missions-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.skin-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.skin-card__swatch {
+  height: 54px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at 25% 30%, rgba(255, 255, 255, 0.48), transparent 24%),
+    linear-gradient(135deg, var(--skin-a), var(--skin-b));
+}
+
+.skin-card--active {
+  border-color: rgba(126, 246, 255, 0.38);
+  box-shadow: 0 0 0 1px rgba(126, 246, 255, 0.14), var(--glow-primary);
+}
+
+.mission-card__progress {
+  height: 8px;
+  margin-top: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.mission-card__bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.info-chip {
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ui-overlay-enter {
+  animation: ui-panel-rise 380ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes ui-panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .ui-grid--two,
+  .button-row--double,
+  .skin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ui-panel {
+    width: min(94vw, 430px);
+    padding: 16px;
+    border-radius: 22px;
+  }
+}

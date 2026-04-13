@@ -1,0 +1,20 @@
+{
+  "name": "echo-heist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ECHO HEIST - a neon stealth puzzle browser game built with Phaser 3, TypeScript, and Vite.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "validate:levels": "node ./scripts/validate-levels.mjs"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^7.1.0"
+  }
+}
