@@ -13,6 +13,24 @@ const bodyRect = (x, y, size = PLAYER_HITBOX_SIZE) => ({
 const overlaps = (a, b) =>
   a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
+const pointIsClear = (level, point) => !level.walls.some((wall) => overlaps(bodyRect(point.x, point.y), wall));
+
+const segmentIsClear = (level, start, end) => {
+  const distance = Math.hypot(end.x - start.x, end.y - start.y);
+  const sampleCount = Math.max(1, Math.ceil(distance / 8));
+
+  for (let step = 0; step <= sampleCount; step += 1) {
+    const t = step / sampleCount;
+    const x = start.x + (end.x - start.x) * t;
+    const y = start.y + (end.y - start.y) * t;
+    if (!pointIsClear(level, { x, y })) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
 const pathExists = (level, start, goalRect, openChannels = []) => {
   const closedDoors = level.doors.filter((door) => !openChannels.includes(door.channel));
   const blockers = [...level.walls, ...closedDoors];
@@ -81,13 +99,47 @@ for (const level of levels) {
   const canReachCore = pathExists(level, level.spawn, coreRect, openChannels);
   const canReachExit = pathExists(level, level.core, level.exit, openChannels);
   const canSkipBreach = level.requiresBreach ? pathExists(level, level.spawn, coreRect, initialOpenChannels) : false;
+  const invalidGuardRoutes = level.guards
+    .map((guard) => {
+      const spawn = { x: guard.x, y: guard.y };
+      const points = guard.patrol;
+      if (!pointIsClear(level, spawn)) {
+        return `${guard.id} spawn overlaps a wall`;
+      }
 
-  if (!canReachCore || !canReachExit || canSkipBreach) {
+      for (const patrolPoint of points) {
+        if (!pointIsClear(level, patrolPoint)) {
+          return `${guard.id} patrol point overlaps a wall`;
+        }
+      }
+
+      if (points.length === 0) {
+        return `${guard.id} has no patrol points`;
+      }
+
+      const firstTargetIndex = points.length > 1 ? 1 : 0;
+      if (!segmentIsClear(level, spawn, points[firstTargetIndex])) {
+        return `${guard.id} cannot reach its opening patrol target`;
+      }
+
+      for (let index = 0; index < points.length; index += 1) {
+        const nextIndex = (index + 1) % points.length;
+        if (!segmentIsClear(level, points[index], points[nextIndex])) {
+          return `${guard.id} patrol route crosses a wall`;
+        }
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+
+  if (!canReachCore || !canReachExit || canSkipBreach || invalidGuardRoutes.length > 0) {
     failures.push({
       levelId: level.id,
       canReachCore,
       canReachExit,
-      canSkipBreach
+      canSkipBreach,
+      invalidGuardRoutes
     });
   }
 }

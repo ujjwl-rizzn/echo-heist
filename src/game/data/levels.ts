@@ -11,9 +11,9 @@ export const levels: LevelDefinition[] = [
     tutorial: true,
     name: "Tutorial // First Theft",
     brief:
-      "Helix Ark is about to erase a witness memory seed from the district archive. Print a loop, let the echo hold the relay, slip past the blinded camera, time the sentry, steal the seed, and get back out before the floor relocks.",
+      "Helix Ark is about to erase a witness memory seed from the district archive. Print a loop, let the echo hold the relay, slip past the blinded camera, bait the sentry with a ghost burst if he pins you, steal the seed, and get back out before the floor relocks.",
     tip:
-      "This relay only accepts the echo. End your recording on the cyan plate, deploy the clone, cross the watched lane, then use the cover pillar to break the sentry's line before you steal the seed.",
+      "This relay only accepts the echo. End your recording on the cyan plate, deploy the clone, cross the watched lane, then use the cover pillar. If the sentry locks your lane, a fresh echo burst can spoof him for a couple seconds.",
     payload: {
       name: "Witness Seed K-13",
       description: "A living testimony lattice that proves the archive purge was staged."
@@ -37,9 +37,9 @@ export const levels: LevelDefinition[] = [
     guards: [
       {
         id: "guard-tutorial",
-        x: 1038,
-        y: 378,
-        patrol: [point(1038, 286), point(1038, 468)],
+        x: 1086,
+        y: 386,
+        patrol: [point(1086, 286), point(1086, 470)],
         speed: 74,
         visionRange: 188,
         visionAngle: Math.PI / 3.2
@@ -337,7 +337,17 @@ export const levels: LevelDefinition[] = [
         id: "guard-4",
         x: 470,
         y: 548,
-        patrol: [point(470, 548), point(470, 176), point(780, 176), point(780, 520)],
+        patrol: [
+          point(470, 548),
+          point(470, 408),
+          point(780, 408),
+          point(780, 176),
+          point(780, 408),
+          point(780, 520),
+          point(780, 408),
+          point(470, 408),
+          point(470, 548)
+        ],
         speed: 98,
         visionRange: 232,
         visionAngle: Math.PI / 2.7

@@ -78,6 +78,7 @@ interface RuntimeGuard {
   investigateTimer: number;
   searchAnchorAngle: number;
   searchClock: number;
+  jamTimer: number;
 }
 
 interface RuntimeCamera {
@@ -127,6 +128,8 @@ const normalize = (value: Phaser.Math.Vector2): Phaser.Math.Vector2 => {
   }
   return value.normalize();
 };
+
+const GUARD_JAM_MS = 2100;
 
 export class GameScene extends Phaser.Scene {
   private level!: LevelDefinition;
@@ -306,8 +309,8 @@ export class GameScene extends Phaser.Scene {
       this.playerMoveAccumulator += dt;
       if (this.playerMoveAccumulator >= (stealth ? 300 : 190)) {
         audioManager.playFootstep(stealth ? 0.8 : 1);
-        if (!stealth && !this.level.tutorial) {
-          this.emitNoise({ x: this.playerPosition.x, y: this.playerPosition.y }, 132, "player");
+        if (!stealth) {
+          this.emitNoise({ x: this.playerPosition.x, y: this.playerPosition.y }, this.level.tutorial ? 94 : 132, "player");
         }
         this.playerMoveAccumulator = 0;
       }
@@ -491,7 +494,8 @@ export class GameScene extends Phaser.Scene {
       investigateTarget: null,
       investigateTimer: 0,
       searchAnchorAngle: -Math.PI / 2,
-      searchClock: 0
+      searchClock: 0,
+      jamTimer: 0
     }));
 
     this.cameraSensors = this.level.cameras.map((entry) => ({
@@ -642,7 +646,7 @@ export class GameScene extends Phaser.Scene {
       firedSamples: new Set<number>()
     };
     this.echoesUsed += 1;
-    this.emitNoise({ x: sprite.x, y: sprite.y }, 148, "echo");
+    this.emitNoise({ x: sprite.x, y: sprite.y }, 208, "echo");
   }
 
   private updateEcho(delta: number): void {
@@ -750,7 +754,18 @@ export class GameScene extends Phaser.Scene {
       guard.investigateTimer = Math.max(guard.investigateTimer, actor === "echo" ? 1650 : 1350);
       guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, heardPoint.x, heardPoint.y);
       guard.searchClock = 0;
+      if (actor === "echo") {
+        this.scrambleGuard(guard, heardPoint, GUARD_JAM_MS);
+      }
     });
+  }
+
+  private scrambleGuard(guard: RuntimeGuard, point: Point, durationMs: number): void {
+    guard.jamTimer = Math.max(guard.jamTimer, durationMs);
+    guard.investigateTarget = { ...point };
+    guard.investigateTimer = Math.max(guard.investigateTimer, durationMs);
+    guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, point.x, point.y);
+    guard.searchClock = 0;
   }
 
   private updateNoisePulses(delta: number): void {
@@ -1027,11 +1042,13 @@ export class GameScene extends Phaser.Scene {
     const lockdownSpeed = this.coreCollected ? 1.14 : 1;
 
     this.guards.forEach((guard) => {
-      const seesPlayer = this.canSeeTarget(guard.sprite, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, playerPoint);
+      guard.jamTimer = Math.max(0, guard.jamTimer - delta);
+      const jammed = guard.jamTimer > 0;
       const seesEcho =
-        !seesPlayer &&
         !!echoPoint &&
         this.canSeeTarget(guard.sprite, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, echoPoint);
+      const seesPlayer =
+        !jammed && this.canSeeTarget(guard.sprite, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, playerPoint);
 
       if (seesPlayer) {
         this.registerExposure("SENTRY LOCK", 1);
@@ -1040,10 +1057,7 @@ export class GameScene extends Phaser.Scene {
         guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, playerPoint.x, playerPoint.y);
         guard.searchClock = 0;
       } else if (seesEcho && echoPoint) {
-        guard.investigateTarget = { ...echoPoint };
-        guard.investigateTimer = 1100;
-        guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, echoPoint.x, echoPoint.y);
-        guard.searchClock = 0;
+        this.scrambleGuard(guard, echoPoint, 520);
       }
 
       if (guard.investigateTimer > 0 && guard.investigateTarget) {
@@ -1051,14 +1065,16 @@ export class GameScene extends Phaser.Scene {
         const destination = guard.investigateTarget;
         const vector = new Phaser.Math.Vector2(destination.x - guard.sprite.x, destination.y - guard.sprite.y);
         if (vector.lengthSq() > 36) {
-          vector.normalize().scale(guard.data.speed * lockdownSpeed * 1.18 * (delta / 1000));
+          const responseBoost = jammed ? 1.26 : 1.18;
+          vector.normalize().scale(guard.data.speed * lockdownSpeed * responseBoost * (delta / 1000));
           const next = this.moveBody(guard.sprite.x, guard.sprite.y, vector.x, vector.y);
           guard.sprite.setPosition(next.x, next.y);
           guard.faceAngle = vector.angle();
           guard.searchAnchorAngle = guard.faceAngle;
         } else {
-          guard.searchClock += delta * 0.0052;
-          guard.faceAngle = guard.searchAnchorAngle + Math.sin(guard.searchClock) * 0.52;
+          guard.searchClock += delta * (jammed ? 0.0064 : 0.0052);
+          const sweep = jammed ? 0.34 : 0.52;
+          guard.faceAngle = guard.searchAnchorAngle + Math.sin(guard.searchClock) * sweep;
         }
       } else {
         const patrolTarget = guard.data.patrol[guard.patrolIndex] ?? { x: guard.data.x, y: guard.data.y };
@@ -1073,9 +1089,9 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      guard.sprite.setTint(seesPlayer ? COLORS.danger : guard.investigateTimer > 0 ? COLORS.warning : COLORS.guard);
+      guard.sprite.setTint(seesPlayer ? COLORS.danger : jammed ? COLORS.echo : guard.investigateTimer > 0 ? COLORS.warning : COLORS.guard);
       guard.sprite.setRotation(guard.faceAngle + Math.PI / 2);
-      const coneColor = seesPlayer ? COLORS.danger : seesEcho ? COLORS.warning : COLORS.guard;
+      const coneColor = seesPlayer ? COLORS.danger : jammed ? COLORS.echo : seesEcho ? COLORS.warning : COLORS.guard;
       this.drawVisionCone(guard.cone, guard.sprite.x, guard.sprite.y, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, coneColor);
     });
   }
@@ -1245,7 +1261,7 @@ export class GameScene extends Phaser.Scene {
       const plate = this.plates.find((entry) => entry.data.channel === "door-alpha");
       const playerOnPlate = plate ? overlaps(bodyRect(this.playerPosition.x, this.playerPosition.y), plate.data) : false;
       if (this.activeEcho) {
-        return `Echo is holding the relay and blinding the watcher. Cross now, use the pillar to break the sentry's line, and press E to steal ${this.level.payload.name}.`;
+        return `Echo is holding the relay and blinding the watcher. Cross now. If the sentry pins your lane, redeploy a fresh echo burst to spoof him for a moment, then press E to steal ${this.level.payload.name}.`;
       }
       if (playerOnPlate) {
         return "The relay is keyed to echoes only. Step off, then deploy the recorded loop so your clone holds the plate for you.";
@@ -1253,7 +1269,7 @@ export class GameScene extends Phaser.Scene {
       if (this.recordedSamples.length < 12) {
         return "Charge a short loop, end it on the cyan plate, then press Q to deploy the echo.";
       }
-      return "The cyan plate opens the relay and blinds the watcher, but only when the echo is standing on it. Leave your clone there, cross fast, then use the pillar before committing to the theft.";
+      return "The cyan plate opens the relay and blinds the watcher, but only when the echo is standing on it. Leave your clone there, cross fast, then use the pillar. A fresh echo burst can spoof the sentry for a couple seconds if you need a clean window.";
     }
 
     if (!this.coreCollected && pointDistance(this.playerPosition, this.level.core) <= INTERACT_DISTANCE) {
@@ -1608,7 +1624,7 @@ export class GameScene extends Phaser.Scene {
     if (stage === 1) {
       this.showBanner(
         "STEP 2 // COMMIT",
-        `The breach clock is running. Cross while the camera is blind, use the pillar to break the sentry's line, then steal ${this.level.payload.name}.`,
+        `The breach clock is running. Cross while the camera is blind, use the pillar to break the sentry's line, and if he pins you, trigger a fresh echo burst to spoof him before you steal ${this.level.payload.name}.`,
         2800
       );
       return;
