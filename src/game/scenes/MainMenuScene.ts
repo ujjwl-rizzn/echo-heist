@@ -8,38 +8,61 @@ export class MainMenuScene extends Phaser.Scene {
   }
 
   create(): void {
-    const { saveManager, uiManager, audioManager, levelManager } = getServices(this);
+    const { saveManager, uiManager, audioManager, levelManager, rewardManager } = getServices(this);
     uiManager.clearHud();
-    const saveData = saveManager.getData();
-    uiManager.applySettings(saveData.settings);
+    uiManager.applySettings(saveManager.getSettings());
     audioManager.setMusicMode("menu");
     void audioManager.prime();
     const orderedLevels = levelManager.getLevels().sort((a, b) => a.order - b.order);
-    const defaultLevel =
-      orderedLevels[Math.min(saveData.unlockedLevelOrder, orderedLevels.length - 1)]?.id ??
-      orderedLevels[0]?.id ??
-      "tutorial-split";
 
     const openTutorial = (): void => {
       audioManager.playUi();
       this.scene.start(SCENE_KEYS.TUTORIAL);
     };
 
-    uiManager.showMainMenu(saveData, {
-      onPlay: () => {
-        audioManager.playUi();
-        this.scene.start(SCENE_KEYS.GAME, { levelId: defaultLevel });
-      },
-      onLevels: () => {
-        audioManager.playUi();
-        this.scene.start(SCENE_KEYS.LEVEL_SELECT);
-      },
-      onHow: openTutorial,
-      onSettings: () => {
-        audioManager.playUi();
-        this.scene.start(SCENE_KEYS.SETTINGS, { returnScene: SCENE_KEYS.MENU });
-      }
-    });
+    const render = (message?: { tone: "info" | "success" | "warning"; text: string }): void => {
+      const saveData = saveManager.getData();
+      const defaultLevel =
+        orderedLevels[Math.min(saveData.unlockedLevelOrder, orderedLevels.length - 1)]?.id ??
+        orderedLevels[0]?.id ??
+        "tutorial-split";
+
+      uiManager.showMainMenu(
+        saveData,
+        {
+          onPlay: () => {
+            audioManager.playUi();
+            this.scene.start(SCENE_KEYS.GAME, { levelId: defaultLevel });
+          },
+          onLevels: () => {
+            audioManager.playUi();
+            this.scene.start(SCENE_KEYS.LEVEL_SELECT);
+          },
+          onHow: openTutorial,
+          onSettings: () => {
+            audioManager.playUi();
+            this.scene.start(SCENE_KEYS.SETTINGS, { returnScene: SCENE_KEYS.MENU });
+          },
+          onSponsorDrop: async () => {
+            audioManager.playUi();
+            const reward = await rewardManager.claimMainMenuDrop();
+            if (reward.status === "granted") {
+              audioManager.playSuccess();
+            } else {
+              audioManager.playUi();
+            }
+            render({
+              tone: reward.status === "granted" ? "success" : reward.status === "unavailable" ? "warning" : "info",
+              text: reward.message
+            });
+          }
+        },
+        rewardManager.getMainMenuPanel(),
+        message
+      );
+    };
+
+    render();
 
     this.drawBackdrop();
 

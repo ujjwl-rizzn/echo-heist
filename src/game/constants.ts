@@ -50,5 +50,8 @@ export const ALERT_FLASH_MS = 420;
 export const DETECTION_COOLDOWN_MS = 850;
 export const TOUCH_JOYSTICK_RADIUS = 58;
 export const TOUCH_DEAD_ZONE = 10;
+export const SPONSOR_CACHE_COOLDOWN_MS = 1000 * 60 * 60 * 4;
+export const SPONSOR_CACHE_CREDITS = 180;
+export const DEMO_REWARDED_BREAK_MS = 6000;
 
 export const RANK_ORDER = ["S", "A", "B", "C"] as const;

@@ -624,6 +624,126 @@ select {
   line-height: 1.5;
 }
 
+.notice-banner {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.notice-banner--success {
+  border-color: rgba(113, 255, 183, 0.24);
+  background: rgba(113, 255, 183, 0.08);
+}
+
+.notice-banner--warning {
+  border-color: rgba(255, 215, 111, 0.24);
+  background: rgba(255, 215, 111, 0.08);
+}
+
+.reward-card {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(15, 24, 50, 0.92), rgba(9, 14, 30, 0.96)),
+    rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(126, 246, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 14px 28px rgba(0, 0, 0, 0.28);
+}
+
+.reward-card__eyebrow {
+  color: var(--accent);
+  font-size: 0.74rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.reward-card__title {
+  margin: 0;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 1.2rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reward-card__copy,
+.reward-card__note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.reward-card__note {
+  font-size: 0.86rem;
+}
+
+.reward-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 5, 12, 0.72);
+  pointer-events: auto;
+}
+
+.reward-modal {
+  width: min(92vw, 460px);
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(12, 18, 32, 0.98), rgba(7, 9, 18, 0.98)),
+    radial-gradient(circle at top right, rgba(126, 246, 255, 0.08), transparent 38%);
+  border: 1px solid rgba(126, 246, 255, 0.18);
+  box-shadow: var(--shadow);
+}
+
+.reward-modal__title {
+  margin: 0;
+  font-family: "Chakra Petch", sans-serif;
+  font-size: 1.6rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reward-modal__copy,
+.reward-modal__timer {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.reward-modal__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.reward-modal__meter {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.reward-modal__fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--secondary), var(--primary));
+  box-shadow: var(--glow-secondary);
+  transition: width 100ms linear;
+}
+
 .flash-alarm {
   position: absolute;
   inset: 0;
@@ -739,6 +859,11 @@ select {
 
   .touch-actions {
     grid-template-columns: repeat(2, minmax(76px, 1fr));
+  }
+
+  .reward-modal {
+    padding: 18px;
+    border-radius: 20px;
   }
 }
 

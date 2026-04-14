@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COLORS, SCENE_KEYS } from "../constants";
 import { AudioManager } from "../managers/AudioManager";
 import { LevelManager } from "../managers/LevelManager";
+import { RewardedAdManager } from "../managers/RewardedAdManager";
 import { SaveManager } from "../managers/SaveManager";
 import { UIManager } from "../managers/UIManager";
 import { setServices } from "../utils/services";
@@ -18,11 +19,13 @@ export class BootScene extends Phaser.Scene {
     const audioManager = new AudioManager(saveManager.getSettings());
     const levelManager = new LevelManager();
     const uiManager = new UIManager();
+    const rewardManager = new RewardedAdManager(saveManager, uiManager);
 
     setServices(this, {
       saveManager,
       audioManager,
       levelManager,
+      rewardManager,
       uiManager
     });
 

@@ -150,6 +150,12 @@ export interface SettingsData {
   selectedTheme: string;
 }
 
+export interface RewardMeta {
+  totalClaims: number;
+  totalCreditsEarned: number;
+  lastSponsorDropAt: number | null;
+}
+
 export interface LevelBest {
   completed: boolean;
   bestTimeMs: number | null;
@@ -162,6 +168,7 @@ export interface SaveData {
   totalCredits: number;
   levels: Record<string, LevelBest>;
   settings: SettingsData;
+  rewardMeta: RewardMeta;
 }
 
 export interface HudState {
@@ -196,6 +203,28 @@ export interface LevelResult {
   nextLevelId: string | null;
 }
 
+export interface RewardPanelData {
+  eyebrow: string;
+  title: string;
+  copy: string;
+  buttonLabel: string;
+  note: string;
+  disabled?: boolean;
+}
+
+export interface NoticeData {
+  tone: "info" | "success" | "warning";
+  text: string;
+}
+
+export interface RewardClaimResult {
+  status: "granted" | "cancelled" | "unavailable" | "error";
+  creditsGranted: number;
+  totalCredits: number;
+  message: string;
+  providerLabel: string;
+}
+
 export interface EchoSample extends Point {
   t: number;
   interact: boolean;
@@ -205,6 +234,7 @@ export interface Services {
   saveManager: SaveManager;
   audioManager: AudioManager;
   levelManager: LevelManager;
+  rewardManager: RewardedAdManager;
   uiManager: UIManager;
 }
 
@@ -213,6 +243,7 @@ export interface MainMenuHandlers {
   onLevels: () => void;
   onHow: () => void;
   onSettings: () => void;
+  onSponsorDrop?: () => void;
 }
 
 export interface HowToPlayHandlers {
@@ -247,9 +278,11 @@ export interface ResultHandlers {
   onNext: (() => void) | null;
   onMenu: () => void;
   onLevels: () => void;
+  onSponsorBoost?: () => void;
 }
 
 import type { AudioManager } from "./managers/AudioManager";
 import type { LevelManager } from "./managers/LevelManager";
+import type { RewardedAdManager } from "./managers/RewardedAdManager";
 import type { SaveManager } from "./managers/SaveManager";
 import type { UIManager } from "./managers/UIManager";

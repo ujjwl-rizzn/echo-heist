@@ -5,7 +5,9 @@ import type {
   LevelCardData,
   LevelResult,
   MainMenuHandlers,
+  NoticeData,
   PauseHandlers,
+  RewardPanelData,
   ResultHandlers,
   SaveData,
   SettingsData,
@@ -44,7 +46,12 @@ export class UIManager {
     this.appShell.style.setProperty("--secondary", theme.secondary);
   }
 
-  showMainMenu(saveData: SaveData, handlers: MainMenuHandlers): void {
+  showMainMenu(
+    saveData: SaveData,
+    handlers: MainMenuHandlers,
+    sponsorPanel?: RewardPanelData | null,
+    notice?: NoticeData | null
+  ): void {
     this.clearScreen();
     const card = this.makeScreenCard(
       "ECHO HEIST",
@@ -68,13 +75,24 @@ export class UIManager {
     info.append(
       this.makeStatTile("Unlocked", `${saveData.unlockedLevelOrder + 1} rooms`),
       this.makeStatTile("Credits", `${saveData.totalCredits}`),
+      this.makeStatTile("Sponsor Claims", `${saveData.rewardMeta.totalClaims}`),
       this.makeStatTile("Echo Loop", "4.2 seconds"),
       this.makeStatTile("Threat", "guards + optics"),
       this.makeStatTile("Target", "memory payloads"),
       this.makeStatTile("Style", "stealth + timing")
     );
 
-    menuGrid.append(buttonGrid, info);
+    const sideStack = document.createElement("div");
+    sideStack.className = "stack";
+    if (notice) {
+      sideStack.appendChild(this.makeNotice(notice));
+    }
+    sideStack.append(info);
+    if (sponsorPanel && handlers.onSponsorDrop) {
+      sideStack.appendChild(this.makeRewardCard(sponsorPanel, handlers.onSponsorDrop));
+    }
+
+    menuGrid.append(buttonGrid, sideStack);
     card.querySelector(".screen-card-inner")?.append(menuGrid);
     this.screenRoot.appendChild(card);
   }
@@ -192,7 +210,12 @@ export class UIManager {
     this.screenRoot.appendChild(card);
   }
 
-  showResults(result: LevelResult, handlers: ResultHandlers): void {
+  showResults(
+    result: LevelResult,
+    handlers: ResultHandlers,
+    sponsorPanel?: RewardPanelData | null,
+    notice?: NoticeData | null
+  ): void {
     this.clearScreen();
     const card = this.makeScreenCard(
       "Extraction Complete",
@@ -221,6 +244,12 @@ export class UIManager {
 
     const actions = document.createElement("div");
     actions.className = "button-grid";
+    if (notice) {
+      actions.appendChild(this.makeNotice(notice));
+    }
+    if (sponsorPanel && handlers.onSponsorBoost) {
+      actions.appendChild(this.makeRewardCard(sponsorPanel, handlers.onSponsorBoost));
+    }
     const breakdown = document.createElement("div");
     breakdown.className = "results-list";
     result.scoreBreakdown.forEach((item) => {
@@ -317,6 +346,82 @@ export class UIManager {
     this.screenRoot.appendChild(card);
   }
 
+  async presentRewardedBreak(config: {
+    title: string;
+    copy: string;
+    rewardLabel: string;
+    providerLabel: string;
+    countdownMs: number;
+  }): Promise<boolean> {
+    const overlay = document.createElement("div");
+    overlay.className = "reward-modal-backdrop ui-overlay-enter";
+    overlay.innerHTML = `
+      <section class="reward-modal">
+        <div class="eyebrow">Rewarded Break</div>
+        <h2 class="reward-modal__title">${config.title}</h2>
+        <p class="reward-modal__copy">${config.copy}</p>
+        <div class="reward-modal__meta">
+          <span class="pill">${config.rewardLabel}</span>
+          <span class="pill">${config.providerLabel}</span>
+        </div>
+        <div class="reward-modal__meter">
+          <div class="reward-modal__fill"></div>
+        </div>
+        <p class="reward-modal__timer">Sponsor break ending soon...</p>
+        <div class="button-row button-row--double">
+          <button class="ghost-button" type="button" data-role="cancel">Skip</button>
+          <button class="button" type="button" data-role="claim" disabled>Collect Reward</button>
+        </div>
+      </section>
+    `;
+
+    this.screenRoot.appendChild(overlay);
+
+    const fill = overlay.querySelector<HTMLElement>(".reward-modal__fill");
+    const timerLabel = overlay.querySelector<HTMLElement>(".reward-modal__timer");
+    const cancelButton = overlay.querySelector<HTMLButtonElement>('[data-role="cancel"]');
+    const claimButton = overlay.querySelector<HTMLButtonElement>('[data-role="claim"]');
+
+    return await new Promise<boolean>((resolve) => {
+      const startedAt = performance.now();
+      let done = false;
+
+      const cleanup = (granted: boolean): void => {
+        if (done) {
+          return;
+        }
+        done = true;
+        window.clearInterval(timer);
+        overlay.remove();
+        resolve(granted);
+      };
+
+      const update = (): void => {
+        const elapsed = performance.now() - startedAt;
+        const progress = Math.min(1, elapsed / config.countdownMs);
+        const remaining = Math.max(0, config.countdownMs - elapsed);
+        if (fill) {
+          fill.style.width = `${Math.round(progress * 100)}%`;
+        }
+        if (timerLabel) {
+          timerLabel.textContent =
+            remaining > 0
+              ? `Sponsor break ends in ${(remaining / 1000).toFixed(1)}s`
+              : "Sponsor break complete. Collect the reward.";
+        }
+        if (claimButton) {
+          claimButton.disabled = remaining > 0;
+        }
+      };
+
+      const timer = window.setInterval(update, 100);
+      update();
+
+      cancelButton?.addEventListener("click", () => cleanup(false));
+      claimButton?.addEventListener("click", () => cleanup(true));
+    });
+  }
+
   private makeScreenCard(title: string, subtitle: string): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "screen-wrap";
@@ -372,5 +477,26 @@ export class UIManager {
       render();
     });
     return button;
+  }
+
+  private makeRewardCard(panel: RewardPanelData, onClick: () => void): HTMLElement {
+    const card = document.createElement("div");
+    card.className = "reward-card";
+    card.innerHTML = `
+      <div class="reward-card__eyebrow">${panel.eyebrow}</div>
+      <h3 class="reward-card__title">${panel.title}</h3>
+      <p class="reward-card__copy">${panel.copy}</p>
+      <p class="reward-card__note">${panel.note}</p>
+    `;
+
+    card.appendChild(this.makeButton(panel.buttonLabel, "button", onClick, panel.disabled));
+    return card;
+  }
+
+  private makeNotice(notice: NoticeData): HTMLElement {
+    const banner = document.createElement("div");
+    banner.className = `notice-banner notice-banner--${notice.tone}`;
+    banner.textContent = notice.text;
+    return banner;
   }
 }

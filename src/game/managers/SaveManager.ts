@@ -1,6 +1,6 @@
 import { SAVE_VERSION, STORAGE_KEY } from "../constants";
 import { defaultSettings } from "../data/settings";
-import type { LevelBest, LevelResult, SaveData, SettingsData } from "../types";
+import type { LevelBest, LevelResult, RewardMeta, SaveData, SettingsData } from "../types";
 
 export class SaveManager {
   private data: SaveData;
@@ -15,6 +15,10 @@ export class SaveManager {
 
   getSettings(): SettingsData {
     return { ...this.data.settings };
+  }
+
+  getRewardMeta(): RewardMeta {
+    return { ...this.data.rewardMeta };
   }
 
   updateSettings(next: SettingsData): void {
@@ -53,6 +57,17 @@ export class SaveManager {
     this.persist();
   }
 
+  grantRewardedCredits(amount: number, source: "menu-drop" | "result-boost", claimedAt = Date.now()): number {
+    this.data.totalCredits += amount;
+    this.data.rewardMeta.totalClaims += 1;
+    this.data.rewardMeta.totalCreditsEarned += amount;
+    if (source === "menu-drop") {
+      this.data.rewardMeta.lastSponsorDropAt = claimedAt;
+    }
+    this.persist();
+    return this.data.totalCredits;
+  }
+
   private load(): SaveData {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -73,6 +88,11 @@ export class SaveManager {
         settings: {
           ...defaultSettings,
           ...(parsed.settings ?? {})
+        },
+        rewardMeta: {
+          totalClaims: parsed.rewardMeta?.totalClaims ?? 0,
+          totalCreditsEarned: parsed.rewardMeta?.totalCreditsEarned ?? 0,
+          lastSponsorDropAt: parsed.rewardMeta?.lastSponsorDropAt ?? null
         }
       };
     } catch {
@@ -86,7 +106,12 @@ export class SaveManager {
       unlockedLevelOrder: 0,
       totalCredits: 0,
       levels: {},
-      settings: { ...defaultSettings }
+      settings: { ...defaultSettings },
+      rewardMeta: {
+        totalClaims: 0,
+        totalCreditsEarned: 0,
+        lastSponsorDropAt: null
+      }
     };
   }
 

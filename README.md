@@ -16,6 +16,7 @@ The whole game is built around quick retries and clean execution. A good run sho
 - synth-style audio generated in code
 - level-based structure with replayable score chasing
 - a light narrative frame about recovering proof before the city archive is rewritten
+- optional rewarded-ad hooks that work in demo mode now and can switch to a live web ad unit later
 
 ## Core idea
 
@@ -79,6 +80,37 @@ This project is static after build, so it works well on free hosts.
    - Install command: `npm install`
    - Build command: `npm run build`
    - Output directory: `dist`
+
+### Rewarded ads on Vercel
+
+The project now ships with two reward modes:
+
+- `demo` mode: works immediately and simulates a rewarded break so you can test the economy with zero setup
+- `google-gpt` mode: swaps the demo flow for a real Google Publisher Tag rewarded ad slot once you have a rewarded ad unit
+
+#### Zero-cost first launch
+
+If you do nothing, the build stays in `demo` mode. That means the reward buttons work, the credits logic works, and the UI flow is testable, but you are not earning ad revenue yet.
+
+#### Switching to a live rewarded ad later
+
+1. Create or get access to a Google Ad Manager account and a rewarded ad unit path.
+2. In Vercel, open your project.
+3. Go to `Settings` -> `Environment Variables`.
+4. Add:
+   - `VITE_REWARDED_AD_PROVIDER=google-gpt`
+   - `VITE_GAM_REWARDED_AD_UNIT_PATH=/your-network-code/your-rewarded-unit`
+5. Save the variables for `Production` and `Preview`.
+6. Redeploy the project.
+
+You can also keep `VITE_REWARDED_AD_PROVIDER=demo` in preview builds while only enabling the live ad unit in production.
+
+#### Current reward loops
+
+- Main menu sponsor cache: cooldown-limited bonus credits before a run
+- Results screen sponsor boost: one optional post-run bonus payout per clear
+
+These are optional by design so the room itself stays clean and the monetization does not feel like a paywall.
 
 ### Netlify
 
