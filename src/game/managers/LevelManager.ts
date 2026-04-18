@@ -2,27 +2,16 @@ import { levels } from "../data/levels";
 import type { LevelDefinition } from "../types";
 
 export class LevelManager {
-  getLevels(): LevelDefinition[] {
-    return JSON.parse(JSON.stringify(levels)) as LevelDefinition[];
+  getLevels(): LevelDefinition[] { return JSON.parse(JSON.stringify(levels)) as LevelDefinition[]; }
+  getLevelById(id: string): LevelDefinition {
+    const lv = levels.find(l => l.id === id);
+    if (!lv) throw new Error(`Unknown level: ${id}`);
+    return JSON.parse(JSON.stringify(lv)) as LevelDefinition;
   }
-
-  getLevelById(levelId: string): LevelDefinition {
-    const level = levels.find((entry) => entry.id === levelId);
-    if (!level) {
-      throw new Error(`Unknown level: ${levelId}`);
-    }
-    return JSON.parse(JSON.stringify(level)) as LevelDefinition;
-  }
-
-  getStartLevelId(): string {
-    return levels[0]?.id ?? "";
-  }
-
-  getNextLevelId(levelId: string): string | null {
-    const index = levels.findIndex((entry) => entry.id === levelId);
-    if (index < 0 || index >= levels.length - 1) {
-      return null;
-    }
-    return levels[index + 1]?.id ?? null;
+  getStartLevelId(): string { return levels[0]?.id ?? ""; }
+  getNextLevelId(id: string): string | null {
+    const i = levels.findIndex(l => l.id === id);
+    if (i < 0 || i >= levels.length - 1) return null;
+    return levels[i + 1]?.id ?? null;
   }
 }

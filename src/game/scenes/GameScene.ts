@@ -1,1764 +1,1083 @@
 import Phaser from "phaser";
 import {
-  ALERT_FLASH_MS,
-  COLORS,
-  DETECTION_COOLDOWN_MS,
-  ECHO_DURATION_MS,
-  ECHO_SAMPLE_MS,
-  HACK_DURATION_MS,
-  INTERACT_DISTANCE,
-  PLAYER_HITBOX_SIZE,
-  PLAYER_SPEED,
-  SCENE_KEYS,
-  STEALTH_SPEED
+  ALARM_DURATION_MS, ALERT_FLASH_MS, COLORS,
+  DETECTION_COOLDOWN_MS, ECHO_DURATION_MS,
+  ECHO_MIN_RECORD_MS, ECHO_SAMPLE_MS, GUARD_INVESTIGATE_MS,
+  GUARD_JAM_MS, HACK_DURATION_MS, INTERACT_DISTANCE,
+  PLAYER_HITBOX_SIZE, PLAYER_SPEED, SCENE_KEYS, STEALTH_SPEED
 } from "../constants";
 import { COSMETIC_THEMES } from "../data/cosmetics";
 import { InputManager } from "../managers/InputManager";
 import type {
-  CameraData,
-  ChannelState,
-  CollectibleData,
-  DoorData,
-  EchoSample,
-  GuardData,
-  HudState,
-  LaserData,
-  LevelDefinition,
-  LevelResult,
-  Point,
-  PressurePlateData,
-  Rect,
-  SwitchData,
-  TerminalData
+  CameraData, ChannelState, CollectibleData, DoorData, EchoSample,
+  GuardData, HudState, LaserData, LevelDefinition, LevelResult,
+  Point, PressurePlateData, Rect, ScoreBreakdownItem, SwitchData, TerminalData
 } from "../types";
 import { getServices } from "../utils/services";
 
-interface RuntimeDoor {
+/* ─── geometry helpers ────────────────────────────────────────────────────── */
+const bodyRect = (x: number, y: number, s = PLAYER_HITBOX_SIZE): Rect =>
+  ({ x: x - s/2, y: y - s/2, w: s, h: s });
+
+const overlaps = (a: Rect, b: Rect) =>
+  a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+
+const dist = (a: Point, b: Point) => Math.hypot(a.x-b.x, a.y-b.y);
+
+/* Liang-Barsky segment vs AABB — returns true if segment cuts through rect */
+const segHitsRect = (p: Point, q: Point, r: Rect): boolean => {
+  const dx = q.x-p.x, dy = q.y-p.y;
+  const t: [number,number] = [0,1];
+  const clip = (d: number, n: number): boolean => {
+    if (Math.abs(d) < 1e-9) return n <= 0;
+    const tk = n/d;
+    if (d < 0) { if (tk > t[1]) return false; if (tk > t[0]) t[0] = tk; }
+    else        { if (tk < t[0]) return false; if (tk < t[1]) t[1] = tk; }
+    return true;
+  };
+  return clip(dx, r.x-p.x) && clip(-dx, p.x-(r.x+r.w)) &&
+         clip(dy, r.y-p.y) && clip(-dy, p.y-(r.y+r.h));
+};
+
+/* ─── runtime types ───────────────────────────────────────────────────────── */
+interface RDoor {
   data: DoorData;
   shape: Phaser.GameObjects.Rectangle;
-  glow: Phaser.GameObjects.Rectangle;
+  glow:  Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
   timerBack: Phaser.GameObjects.Rectangle;
   timerFill: Phaser.GameObjects.Rectangle;
 }
-
-interface RuntimePlate {
-  data: PressurePlateData;
-  shape: Phaser.GameObjects.Rectangle;
-}
-
-interface RuntimeSwitch {
-  data: SwitchData;
-  shape: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
-}
-
-interface RuntimeTerminal {
-  data: TerminalData;
-  shape: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
-  progress: Phaser.GameObjects.Rectangle;
-  activeHack: { remainingMs: number; actor: "player" | "echo" } | null;
-}
-
-interface RuntimeCollectible {
-  data: CollectibleData;
-  shape: Phaser.GameObjects.Arc;
-  glow: Phaser.GameObjects.Arc;
-  taken: boolean;
-}
-
-interface RuntimeGuard {
+interface RPlate    { data: PressurePlateData; shape: Phaser.GameObjects.Rectangle; }
+interface RSwitch   { data: SwitchData;        shape: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; }
+interface RTerminal { data: TerminalData;      shape: Phaser.GameObjects.Rectangle; label: Phaser.GameObjects.Text; progress: Phaser.GameObjects.Rectangle; hack: { msLeft: number }|null; }
+interface RPickup   { data: CollectibleData;   shape: Phaser.GameObjects.Arc; glow: Phaser.GameObjects.Arc; taken: boolean; }
+interface RGuard {
   data: GuardData;
   sprite: Phaser.GameObjects.Image;
-  cone: Phaser.GameObjects.Graphics;
-  patrolIndex: number;
-  faceAngle: number;
-  investigateTarget: Point | null;
-  investigateTimer: number;
-  searchAnchorAngle: number;
+  cone:   Phaser.GameObjects.Graphics;
+  patrolIdx: number;
+  angle: number;
+  investigateTarget: Point|null;
+  investigateMs: number;
   searchClock: number;
-  jamTimer: number;
+  jamMs: number;
 }
-
-interface RuntimeCamera {
+/* NOTE: named 'camSensors' to avoid overriding Phaser.Scene.cameras */
+interface RCamera {
   data: CameraData;
-  sprite: Phaser.GameObjects.Image;
-  cone: Phaser.GameObjects.Graphics;
-  currentAngle: number;
+  body:  Phaser.GameObjects.Arc;
+  eye:   Phaser.GameObjects.Arc;
+  cone:  Phaser.GameObjects.Graphics;
+  angle: number;
 }
-
-interface RuntimeLaser {
-  data: LaserData;
-  beam: Phaser.GameObjects.Rectangle;
-  glow: Phaser.GameObjects.Rectangle;
-}
-
-interface ActiveEcho {
-  sprite: Phaser.GameObjects.Image;
-  trail: Phaser.GameObjects.Graphics;
-  samples: EchoSample[];
-  elapsedMs: number;
-  firedSamples: Set<number>;
-}
-
-interface RuntimeNoisePulse {
-  ring: Phaser.GameObjects.Arc;
-  glow: Phaser.GameObjects.Arc;
-  lifeMs: number;
-  totalMs: number;
-  maxScale: number;
-}
-
-const bodyRect = (x: number, y: number, size = PLAYER_HITBOX_SIZE): Rect => ({
-  x: x - size / 2,
-  y: y - size / 2,
-  w: size,
-  h: size
-});
-
-const overlaps = (a: Rect, b: Rect): boolean =>
-  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-
-const pointDistance = (a: Point, b: Point): number => Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
-
-const normalize = (value: Phaser.Math.Vector2): Phaser.Math.Vector2 => {
-  if (value.lengthSq() === 0) {
-    return value;
-  }
-  return value.normalize();
-};
-
-const GUARD_JAM_MS = 2100;
+interface RLaser { data: LaserData; beam: Phaser.GameObjects.Rectangle; glow: Phaser.GameObjects.Rectangle; }
+interface Echo   { sprite: Phaser.GameObjects.Image; trail: Phaser.GameObjects.Graphics; samples: EchoSample[]; ms: number; fired: Set<number>; }
+interface Pulse  { ring: Phaser.GameObjects.Arc; lifeMs: number; totalMs: number; maxScale: number; }
 
 export class GameScene extends Phaser.Scene {
-  private level!: LevelDefinition;
-  private inputManager!: InputManager;
+  private level!:        LevelDefinition;
+  private inputMgr!:     InputManager;
+  private accentHex: number = COLORS.player;
 
-  private player!: Phaser.GameObjects.Image;
-  private core!: Phaser.GameObjects.Image;
-  private coreHalo!: Phaser.GameObjects.Arc;
-  private exitGlow!: Phaser.GameObjects.Rectangle;
-  private exitZone!: Phaser.GameObjects.Rectangle;
-  private alarmFlash!: Phaser.GameObjects.Rectangle;
-  private logicOverlay!: Phaser.GameObjects.Graphics;
-  private objectiveOverlay!: Phaser.GameObjects.Graphics;
-  private recordingTrail!: Phaser.GameObjects.Graphics;
-  private hintLabel!: Phaser.GameObjects.Text;
-  private bannerTitle!: Phaser.GameObjects.Text;
-  private bannerSubtitle!: Phaser.GameObjects.Text;
-  private ambientLines: Phaser.GameObjects.Rectangle[] = [];
+  /* game objects */
+  private player!:       Phaser.GameObjects.Image;
+  private playerGlow!:   Phaser.GameObjects.Arc;
+  private coreImg!:      Phaser.GameObjects.Image;
+  private coreHalo!:     Phaser.GameObjects.Arc;
+  private exitGlow!:     Phaser.GameObjects.Rectangle;
+  private exitZone!:     Phaser.GameObjects.Rectangle;
+  private alarmFlash!:   Phaser.GameObjects.Rectangle;
+  private logicOvl!:     Phaser.GameObjects.Graphics;
+  private objOvl!:       Phaser.GameObjects.Graphics;
+  private recTrail!:     Phaser.GameObjects.Graphics;
+  private hintLbl!:      Phaser.GameObjects.Text;
+  private bannerTxt!:    Phaser.GameObjects.Text;
+  private ambLines:      Phaser.GameObjects.Rectangle[] = [];
 
-  private doors: RuntimeDoor[] = [];
-  private plates: RuntimePlate[] = [];
-  private switches: RuntimeSwitch[] = [];
-  private terminals: RuntimeTerminal[] = [];
-  private collectibles: RuntimeCollectible[] = [];
-  private guards: RuntimeGuard[] = [];
-  private cameraSensors: RuntimeCamera[] = [];
-  private lasers: RuntimeLaser[] = [];
+  /* entity lists */
+  private doors:      RDoor[]     = [];
+  private plates:     RPlate[]    = [];
+  private switches:   RSwitch[]   = [];
+  private terminals:  RTerminal[] = [];
+  private pickups:    RPickup[]   = [];
+  private guards:     RGuard[]    = [];
+  private camSensors: RCamera[]   = []; /* NOT this.cameras — that's Phaser's camera manager */
+  private lasers:     RLaser[]    = [];
 
-  private persistentChannels: ChannelState = {};
-  private channelTimers: Record<string, number> = {};
-  private channels: ChannelState = {};
-  private closedDoorRects: Rect[] = [];
-  private pulsePlateContacts = new Set<string>();
+  /* state */
+  private pos =            new Phaser.Math.Vector2();
+  private persistCh:       ChannelState = {};
+  private chTimers:        Record<string,number> = {};
+  private channels:        ChannelState = {};
+  private wallRects:       Rect[] = [];
+  private closedDoors:     Rect[] = [];
+  private plateContacts =  new Set<string>();
+  private runMs =          0;
+  private moveAcc =        0;
+  private sampleAcc =      0;
+  private hudAcc =         0;
+  private detectCooldown = 0;
+  private alarmFlashMs =   0;
+  private alarmMusicMs =   0;
+  private detections =     0;
+  private credits =        0;
+  private echoUses =       0;
+  private exposureLevel =  0;
+  private exposureSrc =    "";
+  private exposureGain =   0;
+  private coreGot =        false;
+  private hint =           "";
+  private pendingInteract= false;
+  private recorded:        EchoSample[] = [];
+  private echo:            Echo|null = null;
+  private pulses:          Pulse[] = [];
+  private state:           "active"|"compromised"|"complete" = "active";
+  private stateMs =        0;
+  private bannerTimer =    0;
 
-  private playerPosition = new Phaser.Math.Vector2();
-  private playerMoveAccumulator = 0;
-  private sampleAccumulator = 0;
-  private hudAccumulator = 0;
-  private detectionCooldown = 0;
-  private alarmFlashTimer = 0;
-  private runTimeMs = 0;
-  private detections = 0;
-  private credits = 0;
-  private echoesUsed = 0;
-  private exposureLevel = 0;
-  private exposureSource = "";
-  private exposureGain = 0;
-  private coreCollected = false;
-  private interactionHint = "";
-  private roomState: "active" | "compromised" | "complete" = "active";
-  private stateTimer = 0;
-  private bannerTimer = 0;
-  private tutorialBeat = -1;
-  private pendingRecordedInteract = false;
-  private recordedSamples: EchoSample[] = [];
-  private activeEcho: ActiveEcho | null = null;
-  private noisePulses: RuntimeNoisePulse[] = [];
-  private resumeHandler?: () => void;
+  constructor() { super(SCENE_KEYS.GAME); }
 
-  constructor() {
-    super(SCENE_KEYS.GAME);
-  }
-
-  create(data: { levelId?: string } | undefined): void {
+  /* ── lifecycle ─────────────────────────────────────────────────────────── */
+  create(data: {levelId?:string}|undefined): void {
     const { audioManager, levelManager, saveManager, uiManager } = getServices(this);
-    const levelId = data?.levelId ?? "tutorial-split";
-    this.level = levelManager.getLevelById(levelId);
+    const id  = data?.levelId ?? "tutorial-split";
+    this.level = levelManager.getLevelById(id);
+    const set  = saveManager.getSettings();
+    const theme= COSMETIC_THEMES.find(t=>t.id===set.selectedTheme) ?? COSMETIC_THEMES[0]!;
+    this.accentHex = theme.accentHex;
 
-    const settings = saveManager.getSettings();
-    const theme = COSMETIC_THEMES.find((entry) => entry.id === settings.selectedTheme) ?? COSMETIC_THEMES[0];
-    audioManager.applySettings(settings);
+    audioManager.applySettings(set);
     audioManager.setMusicMode("stealth");
     void audioManager.prime();
-    uiManager.applySettings(settings);
-
+    uiManager.applySettings(set);
     uiManager.clearScreen();
     uiManager.clearHud();
 
-    this.inputManager = new InputManager(this, settings);
-    this.scale.setGameSize(this.level.world.width, this.level.world.height);
-    this.cameras.main.setBounds(0, 0, this.level.world.width, this.level.world.height);
+    this.inputMgr = new InputManager(this, set);
+
+    /* reset all state */
+    this.pos.set(this.level.spawn.x, this.level.spawn.y);
+    this.persistCh   = { ...this.level.initialChannels };
+    this.chTimers    = {};
+    this.channels    = { ...this.level.initialChannels };
+    this.wallRects   = [];
+    this.closedDoors = [];
+    this.state       = "active";
+    this.runMs       = 0;
+    this.detections  = 0;
+    this.credits     = 0;
+    this.echoUses    = 0;
+    this.exposureLevel=0;
+    this.coreGot     = false;
+    this.stateMs     = 0;
+    this.pulses      = [];
+    this.recorded    = [];
+    this.echo        = null;
+    this.plateContacts= new Set();
+    this.sampleAcc   = 0;
+    this.hudAcc      = 0;
+    this.moveAcc     = 0;
+    this.detectCooldown  = 0;
+    this.alarmFlashMs    = 0;
+    this.alarmMusicMs    = 0;
+    this.pendingInteract = false;
+    this.ambLines        = [];
+
+    /* Phaser camera setup — use this.cameras.main (Phaser built-in) */
+    this.cameras.main.setBounds(0,0,this.level.world.width,this.level.world.height);
     this.cameras.main.setBackgroundColor("#050611");
+    this.cameras.main.fadeIn(240,0,0,0);
 
-    this.playerPosition.set(this.level.spawn.x, this.level.spawn.y);
-    this.persistentChannels = { ...this.level.initialChannels };
-    this.channelTimers = {};
-    this.channels = { ...this.level.initialChannels };
-    this.roomState = "active";
-    this.stateTimer = 0;
-    this.tutorialBeat = -1;
-    this.noisePulses = [];
-
-    this.drawBackground(theme.accentHex);
-    this.createWorld(theme.accentHex);
-    this.refreshDoorState();
-    this.showBanner(
-      this.level.name,
-      this.level.tutorial
-        ? `${this.level.payload.name}: ${this.level.payload.description} Press Q to deploy the echo and E to interact.`
-        : `${this.level.brief} Target: ${this.level.payload.name}.`,
-      4800
-    );
+    this.buildBackground();
+    this.buildWorld();
+    this.refreshDoors();
+    this.showBanner(`${this.level.name}\n${this.level.brief}`, 5000);
     this.refreshHud();
 
-    this.resumeHandler = () => {
-      const resumedSettings = saveManager.getSettings();
-      audioManager.applySettings(resumedSettings);
-      uiManager.applySettings(resumedSettings);
-      this.inputManager.updateSettings(resumedSettings);
-    };
+    /* resume after pause */
+    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+      const s = saveManager.getSettings();
+      audioManager.applySettings(s);
+      uiManager.applySettings(s);
+      this.inputMgr.updateSettings(s);
+      audioManager.setMusicMode("stealth");
+    });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      if (this.resumeHandler) {
-        this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
-      }
-      this.inputManager.destroy();
+      this.inputMgr.destroy();
       uiManager.clearHud();
-      this.destroyEcho();
-      this.destroyNoisePulses();
+      this.killEcho();
+      this.pulses.forEach(p=>p.ring.destroy());
+      this.pulses = [];
     });
-    this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
-    this.events.on(Phaser.Scenes.Events.RESUME, this.resumeHandler);
   }
 
-  update(_time: number, delta: number): void {
-    const { audioManager } = getServices(this);
-    const dt = Math.min(delta, 33);
+  /* ── main loop ─────────────────────────────────────────────────────────── */
+  update(_t: number, delta: number): void {
+    const dt = Math.min(delta, 40);
+    this.sampleAcc += dt;
+    this.hudAcc    += dt;
+    this.detectCooldown  = Math.max(0, this.detectCooldown - dt);
+    this.alarmFlashMs    = Math.max(0, this.alarmFlashMs   - dt);
+    this.alarmMusicMs    = Math.max(0, this.alarmMusicMs   - dt);
+    this.alarmFlash.setAlpha(this.alarmFlashMs > 0 ? 0.18 : 0);
+    this.tickBanner(dt);
+    this.tickAmbient(dt);
 
-    this.sampleAccumulator += dt;
-    this.hudAccumulator += dt;
-    this.detectionCooldown = Math.max(0, this.detectionCooldown - dt);
-    this.alarmFlashTimer = Math.max(0, this.alarmFlashTimer - dt);
-    this.alarmFlash.setAlpha(this.alarmFlashTimer > 0 ? 0.16 : 0);
-    this.updateBanner(dt);
+    if (this.alarmMusicMs <= 0 && this.state === "active")
+      getServices(this).audioManager.setMusicMode("stealth");
 
-    if (this.roomState === "compromised") {
-      this.stateTimer = Math.max(0, this.stateTimer - dt);
-      this.updateCoreAndExit();
-      this.updateHints();
-      this.animateBackground(dt);
-
-      if (this.hudAccumulator >= 120) {
-        this.refreshHud();
-        this.hudAccumulator = 0;
-      }
-
-      if (this.stateTimer <= 0) {
-        this.scene.start(SCENE_KEYS.GAME, { levelId: this.level.id });
-      }
+    /* compromised — count down then restart */
+    if (this.state === "compromised") {
+      this.stateMs = Math.max(0, this.stateMs - dt);
+      this.tickCoreExit();
+      if (this.hudAcc >= 120) { this.refreshHud(); this.hudAcc = 0; }
+      if (this.stateMs <= 0) this.scene.start(SCENE_KEYS.GAME, { levelId:this.level.id });
       return;
     }
 
-    if (this.inputManager.consumePause()) {
+    const { audioManager } = getServices(this);
+
+    if (this.inputMgr.consumePause()) {
       audioManager.playUi();
-      this.scene.launch(SCENE_KEYS.PAUSE, { levelId: this.level.id });
+      this.scene.launch(SCENE_KEYS.PAUSE, { levelId:this.level.id });
       this.scene.pause();
       return;
     }
-
-    if (this.inputManager.consumeRestart()) {
+    if (this.inputMgr.consumeRestart()) {
       audioManager.playUi();
-      this.scene.start(SCENE_KEYS.GAME, { levelId: this.level.id });
+      this.scene.start(SCENE_KEYS.GAME, { levelId:this.level.id });
       return;
     }
 
-    this.runTimeMs += dt;
+    this.runMs += dt;
     this.exposureGain = 0;
-    this.exposureSource = "";
+    this.exposureSrc  = "";
 
-    const moveVector = this.inputManager.getMovement();
-    const stealth = this.inputManager.isStealthHeld();
-    const moveSpeed = stealth ? STEALTH_SPEED : PLAYER_SPEED;
-    const deltaMove = normalize(moveVector).scale(moveSpeed * (dt / 1000));
-    this.movePlayer(deltaMove.x, deltaMove.y);
-
-    if (moveVector.lengthSq() > 0) {
-      this.playerMoveAccumulator += dt;
-      if (this.playerMoveAccumulator >= (stealth ? 300 : 190)) {
+    /* movement */
+    const move    = this.inputMgr.getMovement();
+    const stealth = this.inputMgr.isStealthHeld();
+    const speed   = stealth ? STEALTH_SPEED : PLAYER_SPEED;
+    if (move.lengthSq() > 0) {
+      const mv = move.clone().normalize().scale(speed * (dt/1000));
+      this.movePlayer(mv.x, mv.y);
+      this.moveAcc += dt;
+      if (this.moveAcc >= (stealth ? 310 : 190)) {
         audioManager.playFootstep(stealth ? 0.8 : 1);
-        if (!stealth) {
-          this.emitNoise({ x: this.playerPosition.x, y: this.playerPosition.y }, this.level.tutorial ? 94 : 132, "player");
-        }
-        this.playerMoveAccumulator = 0;
+        if (!stealth) this.spawnNoise(this.pos, 130, "player");
+        this.moveAcc = 0;
       }
     } else {
-      this.playerMoveAccumulator = 0;
+      this.moveAcc = 0;
     }
 
-    if (this.inputManager.consumeInteract()) {
-      this.pendingRecordedInteract = true;
-      this.tryInteract(this.playerPosition, "player");
+    /* interact: record for echo, then handle */
+    const interactPressed = this.inputMgr.consumeInteract();
+    if (interactPressed) {
+      this.pendingInteract = true;
+      this.handleInteract(this.pos, "player");
     }
 
-    if (this.inputManager.consumeEcho() && this.recordedSamples.length >= 3) {
-      audioManager.playEcho();
-      this.deployEcho();
+    /* echo deploy */
+    if (this.inputMgr.consumeEcho()) {
+      const dur = this.recorded.length > 1
+        ? this.recorded[this.recorded.length-1]!.t - this.recorded[0]!.t : 0;
+      if (dur >= ECHO_MIN_RECORD_MS) {
+        audioManager.playEcho();
+        this.deployEcho();
+      }
     }
 
-    this.recordEchoSample();
-    this.renderRecordingTrail();
-    this.updateEcho(dt);
-    this.updateNoisePulses(dt);
-    this.updateChannelTimers(dt);
-    this.updateChannels();
-    this.renderLogicOverlay();
-    this.updateTerminals(dt);
-    this.updateGuards(dt);
-    this.updateCameras();
-    this.updateLasers();
-    this.updateExposure(dt);
-    this.updateCollectibles();
-    this.updateCoreAndExit();
-    this.updateDoorIndicators();
-    this.renderObjectiveOverlay();
-    this.updateHints();
-    this.updateTutorialBeat();
-    this.animateBackground(dt);
+    /* systems */
+    this.tickEchoRecord();
+    this.drawRecordTrail();
+    this.tickEcho(dt);
+    this.tickPulses(dt);
+    this.tickChTimers(dt);
+    this.tickChannels();
+    this.tickTerminals(dt);
+    this.tickGuards(dt);
+    this.tickCameras();
+    this.tickLasers();
+    this.tickExposure(dt);
+    this.tickPickups();
+    this.tickCoreExit();
+    this.tickDoorBars();
+    this.drawLogicOverlay();
+    this.drawObjOverlay();
+    this.tickHints();
 
-    if (this.hudAccumulator >= 120) {
-      this.refreshHud();
-      this.hudAccumulator = 0;
-    }
+    if (this.hudAcc >= 120) { this.refreshHud(); this.hudAcc = 0; }
   }
 
-  private drawBackground(accent: number): void {
-    const { width, height } = this.level.world;
-    this.add.rectangle(width / 2, height / 2, width, height, 0x050611, 1).setDepth(-30);
-
+  /* ── world build ───────────────────────────────────────────────────────── */
+  private buildBackground(): void {
+    const {width,height} = this.level.world;
+    this.add.rectangle(width/2,height/2,width,height,COLORS.bg,1).setDepth(-30);
     const grid = this.add.graphics().setDepth(-25);
-    grid.lineStyle(1, 0x15304d, 0.35);
-    for (let x = 64; x < width; x += 64) {
-      grid.lineBetween(x, 0, x, height);
-    }
-    for (let y = 64; y < height; y += 64) {
-      grid.lineBetween(0, y, width, y);
-    }
-
-    for (let index = 0; index < 10; index += 1) {
-      const line = this.add.rectangle(
-        Phaser.Math.Between(40, width - 40),
-        Phaser.Math.Between(40, height - 40),
-        Phaser.Math.Between(120, 240),
-        2,
-        Phaser.Math.RND.pick([accent, COLORS.laser]),
-        0.16
-      );
-      line.setAngle(Phaser.Math.Between(-30, 30)).setDepth(-20);
-      this.ambientLines.push(line);
+    grid.lineStyle(1,0x0e2236,0.4);
+    for (let x=64;x<width;x+=64) grid.lineBetween(x,0,x,height);
+    for (let y=64;y<height;y+=64) grid.lineBetween(0,y,width,y);
+    for (let i=0;i<8;i++) {
+      const l = this.add.rectangle(
+        Phaser.Math.Between(60,width-60), Phaser.Math.Between(60,height-60),
+        Phaser.Math.Between(80,200),2,
+        Phaser.Math.RND.pick([this.accentHex,COLORS.laser]),0.1
+      ).setAngle(Phaser.Math.Between(-30,30)).setDepth(-20);
+      this.ambLines.push(l);
     }
   }
 
-  private createWorld(accent: number): void {
-    const settings = getServices(this).saveManager.getSettings();
+  private tickAmbient(_dt: number): void {
+    const t = this.runMs*0.001;
+    this.ambLines.forEach((l,i)=>l.setAlpha(0.06+(Math.sin(t+i*0.8)+1)*0.05));
+  }
 
-    this.player = this.add.image(this.playerPosition.x, this.playerPosition.y, "player").setTint(accent).setDepth(20);
-    this.coreHalo = this.add.circle(this.level.core.x, this.level.core.y, 40, COLORS.core, 0.12).setDepth(14);
-    this.core = this.add.image(this.level.core.x, this.level.core.y, "core").setDepth(16);
-    this.exitGlow = this.add
-      .rectangle(
-        this.level.exit.x + this.level.exit.w / 2,
-        this.level.exit.y + this.level.exit.h / 2,
-        this.level.exit.w + 16,
-        this.level.exit.h + 16,
-        COLORS.success,
-        0.08
-      )
-      .setDepth(5);
-    this.exitZone = this.add
-      .rectangle(
-        this.level.exit.x + this.level.exit.w / 2,
-        this.level.exit.y + this.level.exit.h / 2,
-        this.level.exit.w,
-        this.level.exit.h,
-        COLORS.success,
-        0.12
-      )
-      .setStrokeStyle(2, COLORS.success, 0.9)
-      .setDepth(6);
-    this.exitGlow.setAlpha(this.coreCollected ? 0.16 : 0.08);
-    this.exitZone.setAlpha(this.coreCollected ? 0.22 : 0.12);
+  private buildWorld(): void {
+    const {width,height} = this.level.world;
 
-    this.level.walls.forEach((wall, index) => {
-      this.renderWall(wall, accent, index);
+    /* walls */
+    this.level.walls.forEach(w=>{
+      const cx=w.x+w.w/2, cy=w.y+w.h/2;
+      this.add.rectangle(cx,cy,w.w+8,w.h+8,this.accentHex,0.04).setDepth(2);
+      this.add.rectangle(cx,cy,w.w,w.h,COLORS.wall,0.98).setDepth(3);
+      this.wallRects.push({...w});
     });
 
-    this.doors = this.level.doors.map((door) => {
-      const shape = this.add
-        .rectangle(door.x + door.w / 2, door.y + door.h / 2, door.w, door.h, COLORS.panelSoft, 0.95)
-        .setStrokeStyle(2, COLORS.player, 0.85)
-        .setDepth(11);
-      const glow = this.add
-        .rectangle(door.x + door.w / 2, door.y + door.h / 2, door.w + 10, door.h + 10, COLORS.player, 0.08)
-        .setDepth(10);
-      const labelY = door.y - 22;
-      const label = this.add
-        .text(door.x + door.w / 2, labelY, "", {
-          fontFamily: "Chakra Petch, sans-serif",
-          fontSize: "11px",
-          color: "#c8f8ff",
-          fontStyle: "700"
-        })
-        .setOrigin(0.5, 1)
-        .setDepth(12)
-        .setAlpha(0);
-      const timerBack = this.add
-        .rectangle(door.x + door.w / 2, labelY + 8, Math.max(38, door.w + 12), 5, 0x04111e, 0.88)
-        .setDepth(12)
-        .setAlpha(0);
-      const timerFill = this.add
-        .rectangle(door.x + door.w / 2 - Math.max(38, door.w + 12) / 2, labelY + 8, 0, 5, COLORS.success, 0.92)
-        .setOrigin(0, 0.5)
-        .setDepth(13)
-        .setAlpha(0);
-      return { data: door, shape, glow, label, timerBack, timerFill };
+    /* exit */
+    const ex=this.level.exit, ecx=ex.x+ex.w/2, ecy=ex.y+ex.h/2;
+    this.exitGlow = this.add.rectangle(ecx,ecy,ex.w+16,ex.h+16,COLORS.success,0.08).setDepth(4);
+    this.exitZone = this.add.rectangle(ecx,ecy,ex.w,ex.h,COLORS.success,0.12)
+      .setStrokeStyle(2,COLORS.success,0.9).setDepth(5);
+
+    /* core */
+    this.coreHalo = this.add.circle(this.level.core.x,this.level.core.y,36,COLORS.core,0.12).setDepth(12);
+    this.coreImg  = this.add.image(this.level.core.x,this.level.core.y,"core").setDepth(14);
+
+    /* player */
+    this.playerGlow = this.add.circle(this.pos.x,this.pos.y,24,this.accentHex,0.1).setDepth(18);
+    this.player     = this.add.image(this.pos.x,this.pos.y,"player").setTint(this.accentHex).setDepth(20);
+
+    /* doors */
+    this.doors = this.level.doors.map(d=>{
+      const cx=d.x+d.w/2, cy=d.y+d.h/2, tw=Math.max(38,d.w+12);
+      const glow  = this.add.rectangle(cx,cy,d.w+10,d.h+10,COLORS.player,0.08).setDepth(8);
+      const shape = this.add.rectangle(cx,cy,d.w,d.h,COLORS.panelSoft,0.95)
+        .setStrokeStyle(2,COLORS.player,0.85).setDepth(9);
+      const label = this.add.text(cx,d.y-22,"",{fontFamily:"Chakra Petch,sans-serif",fontSize:"11px",color:"#c8f8ff",fontStyle:"700"})
+        .setOrigin(0.5,1).setDepth(10).setAlpha(0);
+      const timerBack = this.add.rectangle(cx,d.y-14,tw,5,0x04111e,0.88).setDepth(10).setAlpha(0);
+      const timerFill = this.add.rectangle(cx-tw/2,d.y-14,0,5,COLORS.success,0.92).setOrigin(0,0.5).setDepth(11).setAlpha(0);
+      return {data:d,shape,glow,label,timerBack,timerFill};
     });
 
-    this.plates = this.level.plates.map((plate) => ({
-      data: plate,
-      shape: this.add
-        .rectangle(plate.x + plate.w / 2, plate.y + plate.h / 2, plate.w, plate.h, COLORS.player, 0.16)
-        .setStrokeStyle(2, COLORS.player, 0.5)
-        .setDepth(8)
+    /* plates */
+    this.plates = this.level.plates.map(p=>({
+      data:p,
+      shape:this.add.rectangle(p.x+p.w/2,p.y+p.h/2,p.w,p.h,COLORS.player,0.15)
+        .setStrokeStyle(2,COLORS.player,0.5).setDepth(7)
     }));
 
-    this.switches = this.level.switches.map((entry) => ({
-      data: entry,
-      shape: this.add.rectangle(entry.x, entry.y, 44, 44, COLORS.warning, 0.16).setStrokeStyle(2, COLORS.warning, 0.8).setDepth(8),
-      label: this.add.text(entry.x, entry.y + 40, entry.label, {
-        fontFamily: "Space Grotesk, sans-serif",
-        fontSize: "12px",
-        color: "#8da3bc"
-      }).setOrigin(0.5, 0).setDepth(8)
+    /* switches */
+    this.switches = this.level.switches.map(s=>({
+      data:s,
+      shape:this.add.rectangle(s.x,s.y,46,46,COLORS.warning,0.16).setStrokeStyle(2,COLORS.warning,0.8).setDepth(7),
+      label:this.add.text(s.x,s.y+40,s.label,{fontFamily:"Space Grotesk,sans-serif",fontSize:"11px",color:"#8da3bc"}).setOrigin(0.5,0).setDepth(7)
     }));
 
-    this.terminals = this.level.terminals.map((entry) => {
-      const shape = this.add
-        .rectangle(entry.x, entry.y, 54, 44, COLORS.player, 0.14)
-        .setStrokeStyle(2, COLORS.player, 0.8)
-        .setDepth(8);
-      const label = this.add.text(entry.x, entry.y + 38, entry.label, {
-        fontFamily: "Space Grotesk, sans-serif",
-        fontSize: "12px",
-        color: "#8da3bc"
-      }).setOrigin(0.5, 0).setDepth(8);
-      const progress = this.add.rectangle(entry.x - 24, entry.y + 30, 0, 6, COLORS.player, 0.9).setOrigin(0, 0.5).setDepth(8);
-      return { data: entry, shape, label, progress, activeHack: null };
-    });
-
-    this.collectibles = this.level.collectibles.map((entry) => ({
-      data: entry,
-      glow: this.add.circle(entry.x, entry.y, 18, COLORS.warning, 0.14).setDepth(8),
-      shape: this.add.circle(entry.x, entry.y, 10, COLORS.warning, 0.95).setStrokeStyle(2, 0xffffff, 0.35).setDepth(9),
-      taken: false
+    /* terminals */
+    this.terminals = this.level.terminals.map(t=>({
+      data:t,
+      shape:this.add.rectangle(t.x,t.y,56,46,COLORS.player,0.14).setStrokeStyle(2,COLORS.player,0.8).setDepth(7),
+      label:this.add.text(t.x,t.y+38,t.label,{fontFamily:"Space Grotesk,sans-serif",fontSize:"11px",color:"#8da3bc"}).setOrigin(0.5,0).setDepth(7),
+      progress:this.add.rectangle(t.x-24,t.y+30,0,6,COLORS.player,0.9).setOrigin(0,0.5).setDepth(8),
+      hack:null
     }));
 
-    this.guards = this.level.guards.map((entry) => ({
-      data: entry,
-      sprite: this.add.image(entry.x, entry.y, "guard").setDepth(15),
-      cone: this.add.graphics().setDepth(7),
-      patrolIndex: 1 % Math.max(1, entry.patrol.length),
-      faceAngle: -Math.PI / 2,
-      investigateTarget: null,
-      investigateTimer: 0,
-      searchAnchorAngle: -Math.PI / 2,
-      searchClock: 0,
-      jamTimer: 0
+    /* pickups */
+    this.pickups = this.level.collectibles.map(c=>({
+      data:c,
+      glow: this.add.circle(c.x,c.y,18,COLORS.warning,0.14).setDepth(7),
+      shape:this.add.circle(c.x,c.y,10,COLORS.warning,0.95).setStrokeStyle(2,0xffffff,0.3).setDepth(8),
+      taken:false
     }));
 
-    this.cameraSensors = this.level.cameras.map((entry) => ({
-      data: entry,
-      sprite: this.add.image(entry.x, entry.y, "camera").setDepth(14),
-      cone: this.add.graphics().setDepth(7),
-      currentAngle: Phaser.Math.DegToRad(entry.baseAngle)
+    /* guards */
+    this.guards = this.level.guards.map(g=>({
+      data:g,
+      sprite:this.add.image(g.x,g.y,"guard").setDepth(15),
+      cone:  this.add.graphics().setDepth(6),
+      patrolIdx:1 % Math.max(1,g.patrol.length),
+      angle:-Math.PI/2,
+      investigateTarget:null,
+      investigateMs:0,
+      searchClock:0,
+      jamMs:0
     }));
 
-    this.lasers = this.level.lasers.map((entry) => {
-      const horizontal = entry.orientation === "horizontal";
-      const width = horizontal ? entry.length : 8;
-      const height = horizontal ? 8 : entry.length;
+    /* camera sensors — stored in camSensors, NOT this.cameras */
+    this.camSensors = this.level.cameras.map(c=>({
+      data:c,
+      body: this.add.circle(c.x,c.y,18,0x0f2237,0.95).setDepth(13),
+      eye:  this.add.circle(c.x,c.y,7,COLORS.camera,0.95).setDepth(14),
+      cone: this.add.graphics().setDepth(6),
+      angle:Phaser.Math.DegToRad(c.baseAngle)
+    }));
+
+    /* lasers */
+    this.lasers = this.level.lasers.map(l=>{
+      const hz=l.orientation==="horizontal", lw=hz?l.length:8, lh=hz?8:l.length;
       return {
-        data: entry,
-        glow: this.add.rectangle(entry.x, entry.y, width + 10, height + 10, COLORS.laser, 0.06).setDepth(5),
-        beam: this.add.rectangle(entry.x, entry.y, width, height, COLORS.laser, 0.84).setDepth(6)
+        data:l,
+        glow:this.add.rectangle(l.x,l.y,lw+10,lh+10,COLORS.laser,0.1).setDepth(5),
+        beam:this.add.rectangle(l.x,l.y,lw,lh,COLORS.laser,0.88).setDepth(6)
       };
     });
 
-    this.logicOverlay = this.add.graphics().setDepth(4);
-    this.objectiveOverlay = this.add.graphics().setDepth(15);
-    this.recordingTrail = this.add.graphics().setDepth(17);
+    /* overlays */
+    this.logicOvl = this.add.graphics().setDepth(4);
+    this.objOvl   = this.add.graphics().setDepth(16);
+    this.recTrail = this.add.graphics().setDepth(17);
 
-    this.hintLabel = this.add
-      .text(this.level.world.width / 2, this.level.world.height - 18, "", {
-        fontFamily: "Space Grotesk, sans-serif",
-        fontSize: "14px",
-        color: "#eef8ff",
-        align: "center",
-        wordWrap: { width: Math.min(680, this.level.world.width - 160), useAdvancedWrap: true },
-        backgroundColor: "rgba(6, 12, 24, 0.82)",
-        padding: { x: 16, y: 10 }
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(40)
-      .setAlpha(0);
+    /* hint label at bottom */
+    this.hintLbl = this.add.text(width/2,height-14,"",{
+      fontFamily:"Space Grotesk,sans-serif",fontSize:"14px",color:"#eef8ff",align:"center",
+      backgroundColor:"rgba(5,8,20,0.84)",padding:{x:18,y:10},
+      wordWrap:{width:Math.min(680,width-120),useAdvancedWrap:true}
+    }).setOrigin(0.5,1).setDepth(40).setAlpha(0);
 
-    this.bannerTitle = this.add
-      .text(this.level.world.width / 2, 24, "", {
-        fontFamily: "Space Grotesk, sans-serif",
-        fontSize: "18px",
-        color: "#eef8ff",
-        fontStyle: "700",
-        align: "center"
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(45);
+    /* brief banner at top */
+    this.bannerTxt = this.add.text(width/2,26,"",{
+      fontFamily:"Chakra Petch,sans-serif",fontSize:"14px",color:"#9cc9ff",
+      align:"center",wordWrap:{width:640,useAdvancedWrap:true}
+    }).setOrigin(0.5,0).setDepth(45).setAlpha(0);
 
-    this.bannerSubtitle = this.add
-      .text(this.level.world.width / 2, 50, "", {
-        fontFamily: "Space Grotesk, sans-serif",
-        fontSize: "13px",
-        color: "#9cc9ff",
-        align: "center",
-        wordWrap: { width: 620, useAdvancedWrap: true }
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(45);
-
-    this.alarmFlash = this.add
-      .rectangle(
-        this.level.world.width / 2,
-        this.level.world.height / 2,
-        this.level.world.width,
-        this.level.world.height,
-        COLORS.danger,
-        settings.reducedMotion ? 0.06 : 0.14
-      )
-      .setDepth(50)
-      .setAlpha(0);
+    /* alarm screen flash */
+    this.alarmFlash = this.add.rectangle(width/2,height/2,width,height,COLORS.danger,0.18)
+      .setDepth(50).setAlpha(0);
   }
 
-  private movePlayer(deltaX: number, deltaY: number): void {
-    const next = this.moveBody(this.playerPosition.x, this.playerPosition.y, deltaX, deltaY);
-    this.playerPosition.set(next.x, next.y);
-    this.player.setPosition(this.playerPosition.x, this.playerPosition.y);
+  /* ── movement & collision ─────────────────────────────────────────────── */
+  private movePlayer(dx: number, dy: number): void {
+    const n = this.slideMove(this.pos.x,this.pos.y,dx,dy);
+    this.pos.set(n.x,n.y);
+    this.player.setPosition(n.x,n.y);
+    this.playerGlow.setPosition(n.x,n.y);
+    this.updatePlayerVisual();
   }
 
-  private moveBody(currentX: number, currentY: number, deltaX: number, deltaY: number, size = PLAYER_HITBOX_SIZE): Point {
-    let nextX = currentX + deltaX;
-    const half = size / 2;
-    const blockers = this.getBlockingRects();
+  private updatePlayerVisual(): void {
+    const stealth = this.inputMgr.isStealthHeld();
+    const dur = this.recorded.length > 1
+      ? this.recorded[this.recorded.length-1]!.t - this.recorded[0]!.t : 0;
+    const echoReady = dur >= 400 && !this.echo;
+    /* stealth: player dims and glow shrinks */
+    this.player.setAlpha(stealth ? 0.55 : 1);
+    /* echo ready: subtle pulse on player glow */
+    const glowAlpha = stealth ? 0.04 : echoReady ? 0.18 + Math.sin(this.runMs * 0.012) * 0.08 : 0.1;
+    this.playerGlow.setAlpha(glowAlpha);
+    this.playerGlow.setScale(stealth ? 0.7 : echoReady ? 1.15 : 1);
+  }
 
-    const rectX = bodyRect(nextX, currentY, size);
-    blockers.forEach((blocker) => {
-      if (!overlaps(rectX, blocker)) {
-        return;
-      }
-      if (deltaX > 0) {
-        nextX = blocker.x - half;
-      } else if (deltaX < 0) {
-        nextX = blocker.x + blocker.w + half;
-      }
-    });
-
-    let nextY = currentY + deltaY;
-    const rectY = bodyRect(nextX, nextY, size);
-    blockers.forEach((blocker) => {
-      if (!overlaps(rectY, blocker)) {
-        return;
-      }
-      if (deltaY > 0) {
-        nextY = blocker.y - half;
-      } else if (deltaY < 0) {
-        nextY = blocker.y + blocker.h + half;
-      }
-    });
-
+  private slideMove(cx: number, cy: number, dx: number, dy: number, s=PLAYER_HITBOX_SIZE): Point {
+    const half=s/2, block=this.allBlockers();
+    let nx=cx+dx;
+    block.forEach(b=>{ if(overlaps(bodyRect(nx,cy,s),b)) nx=dx>0?b.x-half:b.x+b.w+half; });
+    let ny=cy+dy;
+    block.forEach(b=>{ if(overlaps(bodyRect(nx,ny,s),b)) ny=dy>0?b.y-half:b.y+b.h+half; });
     return {
-      x: Phaser.Math.Clamp(nextX, half, this.level.world.width - half),
-      y: Phaser.Math.Clamp(nextY, half, this.level.world.height - half)
+      x:Phaser.Math.Clamp(nx,half,this.level.world.width-half),
+      y:Phaser.Math.Clamp(ny,half,this.level.world.height-half)
     };
   }
 
-  private recordEchoSample(): void {
-    while (this.sampleAccumulator >= ECHO_SAMPLE_MS) {
-      this.sampleAccumulator -= ECHO_SAMPLE_MS;
-      this.recordedSamples.push({
-        x: this.playerPosition.x,
-        y: this.playerPosition.y,
-        t: this.runTimeMs,
-        interact: this.pendingRecordedInteract
-      });
-      this.pendingRecordedInteract = false;
-    }
+  private allBlockers(): Rect[] { return [...this.wallRects,...this.closedDoors]; }
 
-    const cutoff = this.runTimeMs - ECHO_DURATION_MS;
-    this.recordedSamples = this.recordedSamples.filter((sample) => sample.t >= cutoff);
+  /* ── occlusion ────────────────────────────────────────────────────────── */
+  private occluders(): Rect[] {
+    return [
+      ...this.wallRects,
+      ...this.doors.filter(d=>!this.isDoorOpen(d)).map(d=>d.data as Rect)
+    ];
+  }
+
+  private occluded(from: Point, to: Point, occ: Rect[]): boolean {
+    return occ.some(r=>segHitsRect(from,to,r));
+  }
+
+  private canSee(origin: Point, face: number, range: number, half: number, target: Point, occ: Rect[]): boolean {
+    if (dist(origin,target)>range) return false;
+    let diff = Math.atan2(target.y-origin.y,target.x-origin.x) - face;
+    while(diff> Math.PI) diff-=Math.PI*2;
+    while(diff<-Math.PI) diff+=Math.PI*2;
+    if (Math.abs(diff)>half) return false;
+    return !this.occluded(origin,target,occ);
+  }
+
+  /* ── echo system ──────────────────────────────────────────────────────── */
+  private tickEchoRecord(): void {
+    while(this.sampleAcc>=ECHO_SAMPLE_MS) {
+      this.sampleAcc -= ECHO_SAMPLE_MS;
+      this.recorded.push({x:this.pos.x,y:this.pos.y,t:this.runMs,interact:this.pendingInteract});
+      this.pendingInteract=false;
+    }
+    const cut=this.runMs-ECHO_DURATION_MS;
+    this.recorded=this.recorded.filter(s=>s.t>=cut);
   }
 
   private deployEcho(): void {
-    this.destroyEcho();
-
-    const earliest = this.recordedSamples[0]?.t ?? this.runTimeMs;
-    const samples = this.recordedSamples.map((sample) => ({
-      ...sample,
-      t: sample.t - earliest
-    }));
-
-    const sprite = this.add.image(samples[0]?.x ?? this.playerPosition.x, samples[0]?.y ?? this.playerPosition.y, "echo").setDepth(18);
-    const trail = this.add.graphics().setDepth(17);
-    this.activeEcho = {
-      sprite,
-      trail,
-      samples,
-      elapsedMs: 0,
-      firedSamples: new Set<number>()
-    };
-    this.echoesUsed += 1;
-    this.emitNoise({ x: sprite.x, y: sprite.y }, 208, "echo");
+    this.killEcho();
+    const t0=this.recorded[0]!.t;
+    const samples=this.recorded.map(s=>({...s,t:s.t-t0}));
+    const sprite=this.add.image(samples[0]!.x,samples[0]!.y,"echo").setTint(COLORS.echo).setDepth(18);
+    const trail =this.add.graphics().setDepth(17);
+    this.echo={sprite,trail,samples,ms:0,fired:new Set()};
+    this.echoUses++;
+    this.spawnNoise({x:sprite.x,y:sprite.y},210,"echo");
   }
 
-  private updateEcho(delta: number): void {
-    const { audioManager } = getServices(this);
-    if (!this.activeEcho) {
-      return;
-    }
+  private tickEcho(dt: number): void {
+    if(!this.echo) return;
+    const e=this.echo;
+    e.ms+=dt;
+    const total=e.samples[e.samples.length-1]?.t??0;
+    if(e.ms>total){this.killEcho();return;}
 
-    const echo = this.activeEcho;
-    echo.elapsedMs += delta;
-    const totalDuration = echo.samples[echo.samples.length - 1]?.t ?? 0;
-    if (echo.elapsedMs > totalDuration) {
-      this.destroyEcho();
-      return;
-    }
+    const cur=this.echoLerp(e.samples,e.ms);
+    e.sprite.setPosition(cur.x,cur.y);
 
-    const current = this.getInterpolatedEchoPosition(echo.samples, echo.elapsedMs);
-    echo.sprite.setPosition(current.x, current.y);
-    echo.trail.clear();
-    echo.trail.lineStyle(3, COLORS.echo, 0.55);
-    echo.trail.beginPath();
-    echo.samples.forEach((sample, index) => {
-      if (index === 0) {
-        echo.trail.moveTo(sample.x, sample.y);
-      } else {
-        echo.trail.lineTo(sample.x, sample.y);
-      }
-    });
-    echo.trail.strokePath();
+    e.trail.clear();
+    e.trail.lineStyle(2,COLORS.echo,0.4);
+    e.trail.beginPath();
+    e.samples.forEach((s,i)=>i===0?e.trail.moveTo(s.x,s.y):e.trail.lineTo(s.x,s.y));
+    e.trail.strokePath();
 
-    echo.samples.forEach((sample, index) => {
-      if (sample.interact && sample.t <= echo.elapsedMs && !echo.firedSamples.has(index)) {
-        echo.firedSamples.add(index);
-        this.tryInteract({ x: current.x, y: current.y }, "echo");
-        this.emitNoise({ x: current.x, y: current.y }, 164, "echo");
-        audioManager.playHack();
+    e.samples.forEach((s,i)=>{
+      if(s.interact&&s.t<=e.ms&&!e.fired.has(i)){
+        e.fired.add(i);
+        this.handleInteract({x:cur.x,y:cur.y},"echo");
+        this.spawnNoise({x:cur.x,y:cur.y},164,"echo");
+        getServices(this).audioManager.playHack();
       }
     });
   }
 
-  private destroyEcho(): void {
-    this.activeEcho?.sprite.destroy();
-    this.activeEcho?.trail.destroy();
-    this.activeEcho = null;
+  private killEcho(): void {
+    this.echo?.sprite.destroy();
+    this.echo?.trail.destroy();
+    this.echo=null;
   }
 
-  private destroyNoisePulses(): void {
-    this.noisePulses.forEach((pulse) => {
-      pulse.ring.destroy();
-      pulse.glow.destroy();
-    });
-    this.noisePulses = [];
+  private echoLerp(s: EchoSample[], t: number): Point {
+    if(!s.length) return {x:this.pos.x,y:this.pos.y};
+    let ni=s.findIndex(x=>x.t>=t);
+    if(ni<=0) return {x:s[0]!.x,y:s[0]!.y};
+    if(ni===-1){const l=s[s.length-1]!;return{x:l.x,y:l.y};}
+    const a=s[ni-1]!,b=s[ni]!,f=(t-a.t)/Math.max(1,b.t-a.t);
+    return{x:Phaser.Math.Linear(a.x,b.x,f),y:Phaser.Math.Linear(a.y,b.y,f)};
   }
 
-  private renderRecordingTrail(): void {
-    this.recordingTrail.clear();
-    if (this.recordedSamples.length < 2) {
-      return;
-    }
-
-    const first = this.recordedSamples[0]!;
-    const last = this.recordedSamples[this.recordedSamples.length - 1]!;
-    const charge = Phaser.Math.Clamp((last.t - first.t) / ECHO_DURATION_MS, 0, 1);
-
-    this.recordingTrail.lineStyle(2, COLORS.player, 0.14 + charge * 0.18);
-    this.recordingTrail.beginPath();
-    this.recordedSamples.forEach((sample, index) => {
-      if (index === 0) {
-        this.recordingTrail.moveTo(sample.x, sample.y);
-      } else {
-        this.recordingTrail.lineTo(sample.x, sample.y);
-      }
-    });
-    this.recordingTrail.strokePath();
-
-    this.recordingTrail.fillStyle(COLORS.player, 0.18);
-    this.recordingTrail.fillCircle(first.x, first.y, 5);
-    this.recordingTrail.fillStyle(COLORS.player, 0.32 + charge * 0.24);
-    this.recordingTrail.fillCircle(last.x, last.y, 7);
+  private drawRecordTrail(): void {
+    this.recTrail.clear();
+    if(this.recorded.length<2) return;
+    const first=this.recorded[0]!,last=this.recorded[this.recorded.length-1]!;
+    const charge=Phaser.Math.Clamp((last.t-first.t)/ECHO_DURATION_MS,0,1);
+    this.recTrail.lineStyle(2,COLORS.player,0.1+charge*0.14);
+    this.recTrail.beginPath();
+    this.recorded.forEach((s,i)=>i===0?this.recTrail.moveTo(s.x,s.y):this.recTrail.lineTo(s.x,s.y));
+    this.recTrail.strokePath();
+    this.recTrail.fillStyle(COLORS.player,0.1);  this.recTrail.fillCircle(first.x,first.y,4);
+    this.recTrail.fillStyle(COLORS.player,0.26+charge*0.22); this.recTrail.fillCircle(last.x,last.y,6);
   }
 
-  private emitNoise(point: Point, radius: number, actor: "player" | "echo" | "system"): void {
-    const color = actor === "echo" ? COLORS.echo : actor === "system" ? COLORS.warning : COLORS.player;
-    const ring = this.add.circle(point.x, point.y, 12, color, 0).setStrokeStyle(2, color, 0.34).setDepth(19);
-    const glow = this.add.circle(point.x, point.y, 12, color, 0.08).setDepth(18);
-    this.noisePulses.push({
-      ring,
-      glow,
-      lifeMs: 520,
-      totalMs: 520,
-      maxScale: Math.max(1.6, radius / 12)
-    });
+  /* ── noise ────────────────────────────────────────────────────────────── */
+  private spawnNoise(pt: Point, radius: number, actor: "player"|"echo"|"system"): void {
+    const col=actor==="echo"?COLORS.echo:actor==="system"?COLORS.warning:COLORS.player;
+    const ring=this.add.circle(pt.x,pt.y,10,col,0).setStrokeStyle(2,col,0.28).setDepth(19);
+    this.pulses.push({ring,lifeMs:480,totalMs:480,maxScale:Math.max(1.5,radius/10)});
 
-    this.guards.forEach((guard) => {
-      const distance = Phaser.Math.Distance.Between(guard.sprite.x, guard.sprite.y, point.x, point.y);
-      if (distance > radius || this.isVisionBlocked({ x: guard.sprite.x, y: guard.sprite.y }, point)) {
-        return;
-      }
-
-      const heardPoint = {
-        x: point.x + Phaser.Math.Between(-18, 18),
-        y: point.y + Phaser.Math.Between(-18, 18)
-      };
-      guard.investigateTarget = heardPoint;
-      guard.investigateTimer = Math.max(guard.investigateTimer, actor === "echo" ? 1650 : 1350);
-      guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, heardPoint.x, heardPoint.y);
-      guard.searchClock = 0;
-      if (actor === "echo") {
-        this.scrambleGuard(guard, heardPoint, GUARD_JAM_MS);
-      }
+    const occ=this.occluders();
+    this.guards.forEach(g=>{
+      if(dist({x:g.sprite.x,y:g.sprite.y},pt)>radius) return;
+      if(this.occluded({x:g.sprite.x,y:g.sprite.y},pt,occ)) return;
+      const jit={x:pt.x+Phaser.Math.Between(-14,14),y:pt.y+Phaser.Math.Between(-14,14)};
+      g.investigateTarget=jit;
+      g.investigateMs=Math.max(g.investigateMs,actor==="echo"?GUARD_JAM_MS:GUARD_INVESTIGATE_MS);
+      g.searchClock=0;
+      if(actor==="echo") g.jamMs=Math.max(g.jamMs,GUARD_JAM_MS);
     });
   }
 
-  private scrambleGuard(guard: RuntimeGuard, point: Point, durationMs: number): void {
-    guard.jamTimer = Math.max(guard.jamTimer, durationMs);
-    guard.investigateTarget = { ...point };
-    guard.investigateTimer = Math.max(guard.investigateTimer, durationMs);
-    guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, point.x, point.y);
-    guard.searchClock = 0;
-  }
-
-  private updateNoisePulses(delta: number): void {
-    this.noisePulses = this.noisePulses.filter((pulse) => {
-      pulse.lifeMs -= delta;
-      if (pulse.lifeMs <= 0) {
-        pulse.ring.destroy();
-        pulse.glow.destroy();
-        return false;
-      }
-
-      const progress = 1 - pulse.lifeMs / pulse.totalMs;
-      const scale = 1 + (pulse.maxScale - 1) * progress;
-      pulse.ring.setScale(scale).setAlpha((1 - progress) * 0.74);
-      pulse.glow.setScale(scale * 0.56).setAlpha((1 - progress) * 0.18);
+  private tickPulses(dt: number): void {
+    this.pulses=this.pulses.filter(p=>{
+      p.lifeMs-=dt;
+      if(p.lifeMs<=0){p.ring.destroy();return false;}
+      const prog=1-p.lifeMs/p.totalMs;
+      p.ring.setScale(1+(p.maxScale-1)*prog).setAlpha((1-prog)*0.7);
       return true;
     });
   }
 
-  private renderLogicOverlay(): void {
-    this.logicOverlay.clear();
-    const phase = Math.floor(this.runTimeMs / 180) % 2;
-    const controllers = [
-      ...this.plates.map((plate) => ({
-        channel: plate.data.channel,
-        point: { x: plate.data.x + plate.data.w / 2, y: plate.data.y + plate.data.h / 2 },
-        color: COLORS.player
-      })),
-      ...this.switches.map((entry) => ({
-        channel: entry.data.channel,
-        point: { x: entry.data.x, y: entry.data.y },
-        color: COLORS.warning
-      })),
-      ...this.terminals.map((entry) => ({
-        channel: entry.data.channel,
-        point: { x: entry.data.x, y: entry.data.y },
-        color: COLORS.player
-      }))
-    ];
+  /* ── channels & doors ─────────────────────────────────────────────────── */
+  private tickChannels(): void {
+    const next:ChannelState={...this.persistCh};
+    const pr=bodyRect(this.pos.x,this.pos.y);
+    const er=this.echo?bodyRect(this.echo.sprite.x,this.echo.sprite.y):null;
 
-    controllers.forEach((controller) => {
-      const targets = this.getChannelTargets(controller.channel);
-      if (targets.length === 0) {
-        return;
+    this.plates.forEach(pl=>{
+      const pOn=overlaps(pr,pl.data), eOn=er?overlaps(er,pl.data):false;
+      const on=pOn||eOn, mode=pl.data.mode??"hold", key=pl.data.id;
+      if(mode==="echo"){
+        next[pl.data.channel]=eOn||!!next[pl.data.channel];
+        if(eOn&&!this.plateContacts.has(key)){this.armCh(pl.data.channel);this.plateContacts.add(key);}
+        else if(!eOn) this.plateContacts.delete(key);
+      } else if(mode==="pulse"){
+        if(on&&!this.plateContacts.has(key)){this.armCh(pl.data.channel);this.plateContacts.add(key);}
+        else if(!on) this.plateContacts.delete(key);
+      } else {
+        next[pl.data.channel]=on||!!next[pl.data.channel];
+      }
+      const col=mode==="echo"&&pOn&&!eOn?COLORS.warning:COLORS.player;
+      pl.shape.setFillStyle(col,on?0.28:(next[pl.data.channel]?0.18:0.12));
+      pl.shape.setStrokeStyle(2,col,on?0.8:0.5);
+    });
+
+    Object.entries(this.chTimers).forEach(([ch,rem])=>{if(rem>0)next[ch]=true;});
+    this.channels=next;
+    this.refreshDoors();
+  }
+
+  private tickChTimers(dt: number): void {
+    for(const ch of Object.keys(this.chTimers)){
+      this.chTimers[ch]=Math.max(0,this.chTimers[ch]!-dt);
+      if(this.chTimers[ch]===0) delete this.chTimers[ch];
+    }
+  }
+
+  private armCh(ch: string, dur?: number): void {
+    const d=dur??(this.level.breachWindowMs??Math.max(4600,9200-this.level.order*520));
+    if(d<=0){this.persistCh[ch]=true;return;}
+    this.chTimers[ch]=d;
+  }
+
+  private refreshDoors(): void {
+    this.closedDoors=[];
+    this.doors.forEach(d=>{
+      const open=!!this.channels[d.data.channel];
+      d.shape.setAlpha(open?0.18:0.95);
+      d.glow.setAlpha(open?0.04:0.08);
+      d.shape.setStrokeStyle(2,open?COLORS.success:COLORS.player,0.85);
+      if(!open) this.closedDoors.push(d.data);
+    });
+  }
+
+  private isDoorOpen(d: RDoor): boolean { return !!this.channels[d.data.channel]; }
+
+  private tickDoorBars(): void {
+    const full=this.level.breachWindowMs??Math.max(4600,9200-this.level.order*520);
+    this.doors.forEach(d=>{
+      const rem=this.chTimers[d.data.channel]??0, show=rem>0, tw=Math.max(38,d.data.w+12);
+      d.timerBack.setAlpha(show?0.82:0); d.timerFill.setAlpha(show?1:0); d.label.setAlpha(show?0.9:0);
+      if(!show){d.timerFill.displayWidth=0;d.label.setText("");return;}
+      d.label.setText(`${(rem/1000).toFixed(1)}s`);
+      d.timerFill.displayWidth=tw*Phaser.Math.Clamp(rem/full,0,1);
+      d.timerFill.setFillStyle(rem<2000?COLORS.warning:COLORS.success,0.92);
+    });
+  }
+
+  /* ── terminals ────────────────────────────────────────────────────────── */
+  private tickTerminals(dt: number): void {
+    this.terminals.forEach(t=>{
+      if(!t.hack){t.progress.displayWidth=0;return;}
+      t.hack.msLeft-=dt;
+      t.progress.displayWidth=48*Phaser.Math.Clamp(1-t.hack.msLeft/(t.data.hackTimeMs||HACK_DURATION_MS),0,1);
+      if(t.hack.msLeft<=0){
+        t.hack=null; t.progress.displayWidth=0;
+        this.armCh(t.data.channel);
+        t.shape.setFillStyle(COLORS.success,0.2);
+        this.spawnNoise({x:t.data.x,y:t.data.y},150,"system");
+        getServices(this).audioManager.playHack();
+      }
+    });
+  }
+
+  /* ── guards ───────────────────────────────────────────────────────────── */
+  private tickGuards(dt: number): void {
+    const pp:Point={x:this.pos.x,y:this.pos.y};
+    const ep:Point|null=this.echo?{x:this.echo.sprite.x,y:this.echo.sprite.y}:null;
+    const occ=this.occluders(), boost=this.coreGot?1.12:1;
+
+    this.guards.forEach(g=>{
+      g.jamMs         =Math.max(0,g.jamMs-dt);
+      g.investigateMs =Math.max(0,g.investigateMs-dt);
+      const jammed=g.jamMs>0;
+
+      const seesEcho  =!!ep&&this.canSee({x:g.sprite.x,y:g.sprite.y},g.angle,g.data.visionRange,g.data.visionAngle/2,ep,occ);
+      const seesPlayer=!jammed&&this.canSee({x:g.sprite.x,y:g.sprite.y},g.angle,g.data.visionRange,g.data.visionAngle/2,pp,occ);
+
+      if(seesPlayer){
+        this.registerExposure("SENTRY LOCK",1);
+        g.investigateTarget={...pp}; g.investigateMs=1400; g.searchClock=0;
+      } else if(seesEcho&&ep){
+        g.jamMs=Math.max(g.jamMs,GUARD_JAM_MS);
+        g.investigateTarget={...ep}; g.investigateMs=Math.max(g.investigateMs,GUARD_JAM_MS); g.searchClock=0;
       }
 
-      const active = Boolean(this.channels[controller.channel]);
-      const color = active ? COLORS.success : controller.color;
-      const alpha = active ? 0.42 : 0.18;
+      if(g.investigateMs>0&&g.investigateTarget){
+        const tgt=g.investigateTarget, dx=tgt.x-g.sprite.x, dy=tgt.y-g.sprite.y;
+        const d2=dx*dx+dy*dy;
+        if(d2>36){
+          const mag=Math.sqrt(d2), spd=g.data.speed*boost*(jammed?1.3:1.15);
+          const nx=this.slideMove(g.sprite.x,g.sprite.y,(dx/mag)*spd*(dt/1000),(dy/mag)*spd*(dt/1000));
+          g.sprite.setPosition(nx.x,nx.y); g.angle=Math.atan2(dy,dx);
+        } else {
+          g.searchClock+=dt*0.005;
+          g.angle=Math.atan2(tgt.y-g.sprite.y,tgt.x-g.sprite.x)+Math.sin(g.searchClock)*0.5;
+        }
+      } else {
+        const pat=g.data.patrol[g.patrolIdx]??{x:g.data.x,y:g.data.y};
+        const dx=pat.x-g.sprite.x, dy=pat.y-g.sprite.y, d2=dx*dx+dy*dy;
+        if(d2<36) g.patrolIdx=(g.patrolIdx+1)%g.data.patrol.length;
+        else {
+          const mag=Math.sqrt(d2), spd=g.data.speed*boost;
+          const nx=this.slideMove(g.sprite.x,g.sprite.y,(dx/mag)*spd*(dt/1000),(dy/mag)*spd*(dt/1000));
+          g.sprite.setPosition(nx.x,nx.y); g.angle=Math.atan2(dy,dx);
+        }
+      }
 
-      this.logicOverlay.fillStyle(color, active ? 0.24 : 0.12);
-      this.logicOverlay.fillCircle(controller.point.x, controller.point.y, active ? 8 : 6);
+      const tint=seesPlayer?COLORS.danger:jammed?COLORS.echo:g.investigateMs>0?COLORS.warning:COLORS.guard;
+      g.sprite.setTint(tint).setRotation(g.angle+Math.PI/2);
+      const coneCol=seesPlayer?COLORS.danger:jammed?COLORS.echo:seesEcho?COLORS.warning:COLORS.guard;
+      this.drawCone(g.cone,g.sprite.x,g.sprite.y,g.angle,g.data.visionRange,g.data.visionAngle/2,coneCol);
+    });
+  }
 
-      targets.forEach((target) => {
-        this.drawDataLink(controller.point, target, color, alpha, phase);
-        this.logicOverlay.fillStyle(color, active ? 0.22 : 0.1);
-        this.logicOverlay.fillCircle(target.x, target.y, active ? 7 : 5);
+  /* ── cameras ──────────────────────────────────────────────────────────── */
+  private tickCameras(): void {
+    const pp:Point={x:this.pos.x,y:this.pos.y};
+    const ep:Point|null=this.echo?{x:this.echo.sprite.x,y:this.echo.sprite.y}:null;
+    const occ=this.occluders(), boost=this.coreGot?1.15:1;
+    const CAM_HALF=Phaser.Math.DegToRad(22);
+
+    this.camSensors.forEach(c=>{
+      const chOn=c.data.channel?!!this.channels[c.data.channel]:true;
+      const enabled=c.data.channel?(c.data.activeWhen==="inactive"?!chOn:chOn):true;
+      c.angle=Phaser.Math.DegToRad(c.data.baseAngle)+
+        Math.sin(this.runMs*0.001*c.data.speed*boost)*Phaser.Math.DegToRad(c.data.sweep);
+
+      const seesP=enabled&&this.canSee({x:c.data.x,y:c.data.y},c.angle,c.data.range,CAM_HALF,pp,occ);
+      const seesE=enabled&&!seesP&&!!ep&&this.canSee({x:c.data.x,y:c.data.y},c.angle,c.data.range,CAM_HALF,ep,occ);
+      if(seesP) this.registerExposure("OPTIC TRACE",1.18);
+
+      const eyeCol=!enabled?COLORS.muted:seesP?COLORS.danger:seesE?COLORS.warning:COLORS.camera;
+      c.eye.setFillStyle(eyeCol,enabled?0.95:0.5);
+      c.cone.clear();
+      if(enabled) this.drawCone(c.cone,c.data.x,c.data.y,c.angle,c.data.range,CAM_HALF,
+        seesP?COLORS.danger:seesE?COLORS.warning:COLORS.camera);
+    });
+  }
+
+  /* ── lasers ───────────────────────────────────────────────────────────── */
+  private tickLasers(): void {
+    const pr=bodyRect(this.pos.x,this.pos.y);
+    this.lasers.forEach(l=>{
+      const chOk =l.data.channel?(l.data.activeWhen==="inactive"?!this.channels[l.data.channel]:!!this.channels[l.data.channel]):true;
+      const cyc  =l.data.cycle;
+      const cycOk=cyc?((this.runMs+(cyc.offsetMs??0))%(cyc.onMs+cyc.offMs))<cyc.onMs:true;
+      const on   =chOk&&cycOk;
+      l.beam.setAlpha(on?0.9:0.1); l.glow.setAlpha(on?0.22:0.04);
+      if(!on) return;
+      const hz=l.data.orientation==="horizontal";
+      const br:Rect={x:l.data.x-(hz?l.data.length/2:5),y:l.data.y-(hz?5:l.data.length/2),w:hz?l.data.length:10,h:hz?10:l.data.length};
+      if(overlaps(pr,br)) this.triggerDetection();
+    });
+  }
+
+  /* ── exposure / detection ─────────────────────────────────────────────── */
+  private registerExposure(src: string, gain: number): void {
+    if(gain>=this.exposureGain){this.exposureGain=gain;this.exposureSrc=src;}
+  }
+
+  private tickExposure(dt: number): void {
+    if(this.state!=="active") return;
+    if(this.exposureGain>0){
+      const lockMs=this.exposureGain>=1.1?340:460;
+      this.exposureLevel=Math.min(1,this.exposureLevel+(dt/lockMs)*this.exposureGain);
+    } else {
+      this.exposureLevel=Math.max(0,this.exposureLevel-dt/520);
+      if(this.exposureLevel===0) this.exposureSrc="";
+    }
+    if(this.exposureLevel>=1){this.triggerDetection();this.exposureLevel=0;this.exposureGain=0;this.exposureSrc="";}
+  }
+
+  private triggerDetection(): void {
+    if(this.detectCooldown>0||this.state!=="active") return;
+    this.detectCooldown  = DETECTION_COOLDOWN_MS;
+    this.alarmFlashMs    = ALERT_FLASH_MS;
+    this.alarmMusicMs    = ALARM_DURATION_MS+1200;
+    this.detections++;
+    this.state   = "compromised";
+    this.stateMs = ALARM_DURATION_MS;
+    this.killEcho();
+    getServices(this).audioManager.setMusicMode("alarm");
+    getServices(this).audioManager.playAlarm();
+    this.cameras.main.shake(150,0.004);
+    this.cameras.main.flash(100,255,80,110,false);
+    this.showBanner("DETECTED — Room resetting...",ALARM_DURATION_MS);
+  }
+
+  /* ── pickups ──────────────────────────────────────────────────────────── */
+  private tickPickups(): void {
+    const {audioManager}=getServices(this);
+    this.pickups.forEach(c=>{
+      if(c.taken) return;
+      const pulse=0.92+(Math.sin(this.runMs*0.007+c.data.x*0.01)+1)*0.08;
+      c.shape.setScale(pulse); c.glow.setScale(0.9+pulse*0.16);
+      if(dist(c.data,this.pos)<=22){
+        c.taken=true; c.shape.destroy(); c.glow.destroy();
+        this.credits+=c.data.value; audioManager.playPickup();
+        const lbl=this.add.text(c.data.x,c.data.y-6,`+${c.data.value}`,
+          {fontFamily:"Chakra Petch,sans-serif",fontSize:"15px",color:"#ffd76f",fontStyle:"700"}).setOrigin(0.5).setDepth(26);
+        this.tweens.add({targets:lbl,y:c.data.y-32,alpha:0,duration:500,onComplete:()=>lbl.destroy()});
+      }
+    });
+  }
+
+  /* ── core & exit ──────────────────────────────────────────────────────── */
+  private tickCoreExit(): void {
+    const nearCore=!this.coreGot&&dist(this.level.core,this.pos)<=INTERACT_DISTANCE;
+    const nearExit=this.coreGot&&overlaps(bodyRect(this.pos.x,this.pos.y),this.level.exit);
+    const pulse=0.08+Math.sin(this.runMs*0.008)*0.03;
+    const hPulse=1+Math.sin(this.runMs*0.006)*0.08;
+    const floatY=Math.sin(this.runMs*0.004)*2.4;
+
+    this.coreImg.setY(this.level.core.y+floatY);
+    this.coreHalo.setY(this.level.core.y+floatY);
+    this.coreImg.setAlpha(this.coreGot?0.3:nearCore?0.98:0.86);
+    this.coreHalo.setAlpha(this.coreGot?0.04:nearCore?0.22:0.12);
+    this.coreHalo.setScale(nearCore?hPulse*1.1:hPulse);
+    this.exitGlow.setAlpha(this.coreGot?0.16+pulse:0.08);
+    this.exitZone.setAlpha(this.coreGot?(nearExit?0.36:0.22):0.12);
+    this.exitZone.setStrokeStyle(2,this.coreGot?COLORS.success:COLORS.muted,this.coreGot?0.95:0.4);
+
+    if(nearExit&&this.state==="active") this.finishLevel();
+  }
+
+  private collectCore(): void {
+    const {audioManager}=getServices(this);
+    this.coreGot=true;
+    this.coreImg.setAlpha(0.3); this.coreHalo.setAlpha(0.04);
+    audioManager.playSuccess();
+    this.cameras.main.flash(180,154,255,214,false);
+    this.showBanner(`${this.level.payload.name} secured — reach the exit.`,3200);
+  }
+
+  /* ── interaction ──────────────────────────────────────────────────────── */
+  private handleInteract(pt: Point, actor: "player"|"echo"): void {
+    const {audioManager}=getServices(this);
+
+    /* core pickup (player only) */
+    if(actor==="player"&&!this.coreGot&&dist(pt,this.level.core)<=INTERACT_DISTANCE){
+      this.collectCore(); return;
+    }
+
+    /* switch */
+    const sw=this.switches.find(s=>dist(pt,s.data)<=INTERACT_DISTANCE);
+    if(sw){
+      this.armCh(sw.data.channel);
+      sw.shape.setFillStyle(COLORS.success,0.22);
+      this.spawnNoise({x:sw.data.x,y:sw.data.y},actor==="echo"?148:128,actor);
+      audioManager.playDoor(); return;
+    }
+
+    /* terminal */
+    const tm=this.terminals.find(t=>dist(pt,t.data)<=INTERACT_DISTANCE&&!t.hack);
+    if(tm){
+      tm.hack={msLeft:tm.data.hackTimeMs||HACK_DURATION_MS};
+      tm.shape.setFillStyle(COLORS.warning,0.22);
+      this.spawnNoise({x:tm.data.x,y:tm.data.y},actor==="echo"?164:142,actor);
+      audioManager.playHack();
+    }
+  }
+
+  /* ── hints ────────────────────────────────────────────────────────────── */
+  private tickHints(): void {
+    const h=this.buildHint();
+    this.hint=h;
+    if(!h){this.hintLbl.setText("").setAlpha(0);return;}
+    this.hintLbl.setText(h).setAlpha(0.92);
+  }
+
+  private buildHint(): string {
+    if(this.state==="compromised") return "Detected. Room is resetting...";
+
+    if(this.level.tutorial&&!this.coreGot&&!this.channels["door-alpha"]){
+      if(this.echo) return "Echo is holding the relay. Cross now — the camera is blind.";
+      const pr=bodyRect(this.pos.x,this.pos.y);
+      const pl=this.plates.find(p=>p.data.channel==="door-alpha");
+      if(pl&&overlaps(pr,pl.data)) return "You're on the plate, but only the echo can hold this relay. Step off, then press Q to deploy.";
+      if(this.recorded.length<12) return "Move to record a loop, then press Q to deploy the echo.";
+      return "End your loop on the cyan plate and press Q. Your clone holds the relay while you cross.";
+    }
+
+    if(!this.coreGot&&dist(this.pos,this.level.core)<=INTERACT_DISTANCE)
+      return `${this.level.payload.name} in range. Press E to steal it.`;
+
+    if(this.coreGot&&overlaps(bodyRect(this.pos.x,this.pos.y),this.level.exit))
+      return "Exit gate open — move into it to escape.";
+
+    if(this.exposureLevel>0.22&&this.exposureSrc)
+      return `${this.exposureSrc} — ${Math.round(this.exposureLevel*100)}%. Break line of sight now.`;
+
+    const sw=this.switches.find(s=>dist(this.pos,s.data)<=INTERACT_DISTANCE);
+    if(sw) return `${sw.data.label}. Press E.`;
+
+    const tm=this.terminals.find(t=>dist(this.pos,t.data)<=INTERACT_DISTANCE);
+    if(tm) return `${tm.data.label}. Press E to hack.`;
+
+    const rem=Object.entries(this.chTimers).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1])[0];
+    if(rem) return this.coreGot?`Breach: ${(rem[1]/1000).toFixed(1)}s — get out.`:`Breach open: ${(rem[1]/1000).toFixed(1)}s — move fast.`;
+
+    if(!this.coreGot) return this.level.tip;
+    return `${this.level.payload.name} secured. Get to the exit gate.`;
+  }
+
+  /* ── overlays ─────────────────────────────────────────────────────────── */
+  private drawLogicOverlay(): void {
+    this.logicOvl.clear();
+    const phase=Math.floor(this.runMs/200)%2;
+    const ctrls=[
+      ...this.plates.map(p=>({ch:p.data.channel,pt:{x:p.data.x+p.data.w/2,y:p.data.y+p.data.h/2},col:COLORS.player})),
+      ...this.switches.map(s=>({ch:s.data.channel,pt:{x:s.data.x,y:s.data.y},col:COLORS.warning})),
+      ...this.terminals.map(t=>({ch:t.data.channel,pt:{x:t.data.x,y:t.data.y},col:COLORS.player}))
+    ];
+    ctrls.forEach(c=>{
+      const tgts=this.chTargetPts(c.ch); if(!tgts.length) return;
+      const active=!!this.channels[c.ch], col=active?COLORS.success:c.col, a=active?0.38:0.15;
+      this.logicOvl.fillStyle(col,a*0.6); this.logicOvl.fillCircle(c.pt.x,c.pt.y,active?8:5);
+      tgts.forEach(tp=>{
+        this.drawDash(c.pt,tp,col,a,phase);
+        this.logicOvl.fillStyle(col,a*0.5); this.logicOvl.fillCircle(tp.x,tp.y,active?6:4);
       });
     });
   }
 
-  private renderObjectiveOverlay(): void {
-    this.objectiveOverlay.clear();
-    const pulse = 0.48 + (Math.sin(this.runTimeMs * 0.008) + 1) * 0.14;
-
-    if (this.exposureLevel > 0.12) {
-      const bracketColor = this.exposureLevel > 0.65 ? COLORS.danger : COLORS.warning;
-      const radius = 14 + this.exposureLevel * 10;
-      this.objectiveOverlay.lineStyle(2, bracketColor, 0.42 + this.exposureLevel * 0.3);
-      this.objectiveOverlay.strokeCircle(this.playerPosition.x, this.playerPosition.y, radius);
-      this.objectiveOverlay.lineStyle(1, bracketColor, 0.22 + this.exposureLevel * 0.22);
-      this.objectiveOverlay.strokeCircle(this.playerPosition.x, this.playerPosition.y, radius + 10);
+  private drawObjOverlay(): void {
+    this.objOvl.clear();
+    const pulse=0.44+(Math.sin(this.runMs*0.008)+1)*0.14;
+    if(this.exposureLevel>0.1){
+      const bc=this.exposureLevel>0.6?COLORS.danger:COLORS.warning, r=14+this.exposureLevel*10;
+      this.objOvl.lineStyle(2,bc,0.38+this.exposureLevel*0.3); this.objOvl.strokeCircle(this.pos.x,this.pos.y,r);
     }
-
-    if (this.level.tutorial) {
-      const tutorialStage = this.getTutorialStage();
-      if (tutorialStage === 0) {
-        const plate = this.plates.find((entry) => entry.data.channel === "door-alpha");
-        const door = this.doors.find((entry) => entry.data.channel === "door-alpha");
-        const camera = this.cameraSensors.find((entry) => entry.data.channel === "door-alpha");
-        if (plate) {
-          this.drawObjectivePulse(
-            { x: plate.data.x + plate.data.w / 2, y: plate.data.y + plate.data.h / 2 },
-            COLORS.player,
-            34,
-            pulse
-          );
-        }
-        if (door) {
-          this.drawObjectivePulse(
-            { x: door.data.x + door.data.w / 2, y: door.data.y + door.data.h / 2 },
-            COLORS.success,
-            30,
-            pulse * 0.92
-          );
-        }
-        if (camera) {
-          this.drawObjectivePulse(
-            { x: camera.data.x, y: camera.data.y },
-            COLORS.warning,
-            26,
-            pulse * 0.8
-          );
-        }
-        return;
-      }
-    }
-
-    if (!this.coreCollected) {
-      this.drawObjectivePulse(this.level.core, COLORS.core, 34, pulse);
-      return;
-    }
-
-    this.drawObjectivePulse(
-      { x: this.level.exit.x + this.level.exit.w / 2, y: this.level.exit.y + this.level.exit.h / 2 },
-      COLORS.success,
-      40,
-      pulse
-    );
+    if(!this.coreGot){this.drawPulse(this.level.core,COLORS.core,32,pulse);return;}
+    const ec=this.level.exit;
+    this.drawPulse({x:ec.x+ec.w/2,y:ec.y+ec.h/2},COLORS.success,38,pulse);
   }
 
-  private getInterpolatedEchoPosition(samples: EchoSample[], timeMs: number): Point {
-    if (samples.length === 0) {
-      return { x: this.playerPosition.x, y: this.playerPosition.y };
-    }
-
-    let nextIndex = samples.findIndex((sample) => sample.t >= timeMs);
-    if (nextIndex <= 0) {
-      return { x: samples[0].x, y: samples[0].y };
-    }
-    if (nextIndex === -1) {
-      const last = samples[samples.length - 1]!;
-      return { x: last.x, y: last.y };
-    }
-
-    const previous = samples[nextIndex - 1]!;
-    const next = samples[nextIndex]!;
-    const total = Math.max(1, next.t - previous.t);
-    const alpha = (timeMs - previous.t) / total;
-    return {
-      x: Phaser.Math.Linear(previous.x, next.x, alpha),
-      y: Phaser.Math.Linear(previous.y, next.y, alpha)
-    };
-  }
-
-  private updateChannels(): void {
-    const nextChannels: ChannelState = { ...this.persistentChannels };
-    const playerRect = bodyRect(this.playerPosition.x, this.playerPosition.y);
-    const echoRect = this.activeEcho ? bodyRect(this.activeEcho.sprite.x, this.activeEcho.sprite.y) : null;
-
-    this.plates.forEach((plate) => {
-      const playerActive = overlaps(playerRect, plate.data);
-      const echoActive = echoRect ? overlaps(echoRect, plate.data) : false;
-      const active = playerActive || echoActive;
-      const plateKey = plate.data.id;
-      const mode = plate.data.mode ?? "hold";
-      if (mode === "pulse") {
-        if (active && !this.pulsePlateContacts.has(plateKey)) {
-          this.armTimedChannel(plate.data.channel);
-          this.pulsePlateContacts.add(plateKey);
-        } else if (!active) {
-          this.pulsePlateContacts.delete(plateKey);
-        }
-      } else if (mode === "echo") {
-        nextChannels[plate.data.channel] = echoActive || nextChannels[plate.data.channel] === true;
-        if (echoActive && !this.pulsePlateContacts.has(plateKey)) {
-          this.armTimedChannel(plate.data.channel);
-          this.pulsePlateContacts.add(plateKey);
-        } else if (!echoActive) {
-          this.pulsePlateContacts.delete(plateKey);
-        }
-      } else {
-        nextChannels[plate.data.channel] = active || nextChannels[plate.data.channel] === true;
-      }
-      const primedByPlayerOnly = mode === "echo" && playerActive && !echoActive;
-      const fillColor = primedByPlayerOnly ? COLORS.warning : COLORS.player;
-      const fillAlpha = active ? 0.28 : nextChannels[plate.data.channel] ? 0.2 : 0.12;
-      plate.shape.setFillStyle(fillColor, fillAlpha);
-      plate.shape.setStrokeStyle(2, fillColor, active ? 0.78 : 0.5);
-    });
-
-    Object.entries(this.channelTimers).forEach(([channel, remaining]) => {
-      if (remaining > 0) {
-        nextChannels[channel] = true;
-      }
-    });
-
-    this.channels = nextChannels;
-    this.refreshDoorState();
-  }
-
-  private updateChannelTimers(delta: number): void {
-    Object.keys(this.channelTimers).forEach((channel) => {
-      this.channelTimers[channel] = Math.max(0, this.channelTimers[channel]! - delta);
-      if (this.channelTimers[channel] <= 0) {
-        delete this.channelTimers[channel];
-      }
-    });
-  }
-
-  private armTimedChannel(channel: string, duration = this.getBreachWindowMs()): void {
-    if (duration <= 0) {
-      this.persistentChannels[channel] = true;
-      return;
-    }
-    this.channelTimers[channel] = duration;
-  }
-
-  private getBreachWindowMs(): number {
-    return this.level.breachWindowMs ?? Math.max(4600, 9200 - this.level.order * 520);
-  }
-
-  private refreshDoorState(): void {
-    this.closedDoorRects = [];
-    this.doors.forEach((door) => {
-      const open = Boolean(this.channels[door.data.channel]);
-      door.shape.setAlpha(open ? 0.18 : 0.95);
-      door.glow.setAlpha(open ? 0.03 : 0.08);
-      door.shape.setStrokeStyle(2, open ? COLORS.success : COLORS.player, 0.85);
-      if (!open) {
-        this.closedDoorRects.push(door.data);
-      }
-    });
-  }
-
-  private updateDoorIndicators(): void {
-    const fullWindow = this.getBreachWindowMs();
-    this.doors.forEach((door) => {
-      const remaining = this.channelTimers[door.data.channel] ?? 0;
-      const showTimer = remaining > 0;
-      const width = Math.max(38, door.data.w + 12);
-      door.timerBack.setAlpha(showTimer ? 0.82 : 0);
-      door.timerFill.setAlpha(showTimer ? 1 : 0);
-      door.label.setAlpha(showTimer ? 0.95 : 0);
-      if (!showTimer) {
-        door.timerFill.displayWidth = 0;
-        door.label.setText("");
-        return;
-      }
-      door.label.setText(`${(remaining / 1000).toFixed(1)}s`);
-      door.timerFill.displayWidth = width * Phaser.Math.Clamp(remaining / fullWindow, 0, 1);
-      const tint = remaining < 2200 ? COLORS.warning : COLORS.success;
-      door.timerFill.setFillStyle(tint, 0.92);
-    });
-  }
-
-  private updateTerminals(delta: number): void {
-    const { audioManager } = getServices(this);
-    this.terminals.forEach((terminal) => {
-      if (!terminal.activeHack) {
-        terminal.progress.displayWidth = 0;
-        return;
-      }
-
-      terminal.activeHack.remainingMs -= delta;
-      const total = Math.max(terminal.data.hackTimeMs, HACK_DURATION_MS);
-      const progress = Phaser.Math.Clamp(1 - terminal.activeHack.remainingMs / total, 0, 1);
-      terminal.progress.displayWidth = 48 * progress;
-
-      if (terminal.activeHack.remainingMs <= 0) {
-        terminal.activeHack = null;
-        terminal.progress.displayWidth = 0;
-        this.armTimedChannel(terminal.data.channel);
-        terminal.shape.setFillStyle(COLORS.success, 0.2);
-        this.emitNoise({ x: terminal.data.x, y: terminal.data.y }, 154, "system");
-        audioManager.playHack();
-      }
-    });
-  }
-
-  private updateGuards(delta: number): void {
-    const playerPoint = { x: this.playerPosition.x, y: this.playerPosition.y };
-    const echoPoint = this.activeEcho ? { x: this.activeEcho.sprite.x, y: this.activeEcho.sprite.y } : null;
-    const lockdownSpeed = this.coreCollected ? 1.14 : 1;
-
-    this.guards.forEach((guard) => {
-      guard.jamTimer = Math.max(0, guard.jamTimer - delta);
-      const jammed = guard.jamTimer > 0;
-      const seesEcho =
-        !!echoPoint &&
-        this.canSeeTarget(guard.sprite, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, echoPoint);
-      const seesPlayer =
-        !jammed && this.canSeeTarget(guard.sprite, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, playerPoint);
-
-      if (seesPlayer) {
-        this.registerExposure("SENTRY LOCK", 1);
-        guard.investigateTarget = { ...playerPoint };
-        guard.investigateTimer = 1300;
-        guard.searchAnchorAngle = Phaser.Math.Angle.Between(guard.sprite.x, guard.sprite.y, playerPoint.x, playerPoint.y);
-        guard.searchClock = 0;
-      } else if (seesEcho && echoPoint) {
-        this.scrambleGuard(guard, echoPoint, 520);
-      }
-
-      if (guard.investigateTimer > 0 && guard.investigateTarget) {
-        guard.investigateTimer -= delta;
-        const destination = guard.investigateTarget;
-        const vector = new Phaser.Math.Vector2(destination.x - guard.sprite.x, destination.y - guard.sprite.y);
-        if (vector.lengthSq() > 36) {
-          const responseBoost = jammed ? 1.26 : 1.18;
-          vector.normalize().scale(guard.data.speed * lockdownSpeed * responseBoost * (delta / 1000));
-          const next = this.moveBody(guard.sprite.x, guard.sprite.y, vector.x, vector.y);
-          guard.sprite.setPosition(next.x, next.y);
-          guard.faceAngle = vector.angle();
-          guard.searchAnchorAngle = guard.faceAngle;
-        } else {
-          guard.searchClock += delta * (jammed ? 0.0064 : 0.0052);
-          const sweep = jammed ? 0.34 : 0.52;
-          guard.faceAngle = guard.searchAnchorAngle + Math.sin(guard.searchClock) * sweep;
-        }
-      } else {
-        const patrolTarget = guard.data.patrol[guard.patrolIndex] ?? { x: guard.data.x, y: guard.data.y };
-        const vector = new Phaser.Math.Vector2(patrolTarget.x - guard.sprite.x, patrolTarget.y - guard.sprite.y);
-        if (vector.lengthSq() < 36) {
-          guard.patrolIndex = (guard.patrolIndex + 1) % guard.data.patrol.length;
-        } else {
-          vector.normalize().scale(guard.data.speed * lockdownSpeed * (delta / 1000));
-          const next = this.moveBody(guard.sprite.x, guard.sprite.y, vector.x, vector.y);
-          guard.sprite.setPosition(next.x, next.y);
-          guard.faceAngle = vector.angle();
-        }
-      }
-
-      guard.sprite.setTint(seesPlayer ? COLORS.danger : jammed ? COLORS.echo : guard.investigateTimer > 0 ? COLORS.warning : COLORS.guard);
-      guard.sprite.setRotation(guard.faceAngle + Math.PI / 2);
-      const coneColor = seesPlayer ? COLORS.danger : jammed ? COLORS.echo : seesEcho ? COLORS.warning : COLORS.guard;
-      this.drawVisionCone(guard.cone, guard.sprite.x, guard.sprite.y, guard.faceAngle, guard.data.visionRange, guard.data.visionAngle, coneColor);
-    });
-  }
-
-  private updateCameras(): void {
-    const playerPoint = { x: this.playerPosition.x, y: this.playerPosition.y };
-    const echoPoint = this.activeEcho ? { x: this.activeEcho.sprite.x, y: this.activeEcho.sprite.y } : null;
-    const lockdownSpeed = this.coreCollected ? 1.16 : 1;
-
-    this.cameraSensors.forEach((camera) => {
-      const channelActive = camera.data.channel ? Boolean(this.channels[camera.data.channel]) : true;
-      const enabled = camera.data.channel
-        ? camera.data.activeWhen === "inactive"
-          ? !channelActive
-          : channelActive
-        : true;
-
-      camera.currentAngle =
-        Phaser.Math.DegToRad(camera.data.baseAngle) +
-        Math.sin(this.runTimeMs * 0.001 * camera.data.speed * lockdownSpeed) * Phaser.Math.DegToRad(camera.data.sweep);
-
-      const seesPlayer =
-        enabled && this.canSeeTarget(camera.sprite, camera.currentAngle, camera.data.range, Phaser.Math.DegToRad(38), playerPoint);
-      const seesEcho =
-        enabled &&
-        !seesPlayer &&
-        !!echoPoint &&
-        this.canSeeTarget(camera.sprite, camera.currentAngle, camera.data.range, Phaser.Math.DegToRad(38), echoPoint);
-
-      camera.sprite.setTint(!enabled ? COLORS.muted : seesPlayer ? COLORS.danger : seesEcho ? COLORS.warning : COLORS.camera);
-      camera.sprite.setRotation(camera.currentAngle + Math.PI / 2);
-      if (seesPlayer) {
-        this.registerExposure("OPTIC TRACE", 1.18);
-      }
-
-      camera.cone.clear();
-      if (enabled) {
-        const coneColor = seesPlayer ? COLORS.danger : seesEcho ? COLORS.warning : COLORS.camera;
-        this.drawVisionCone(camera.cone, camera.sprite.x, camera.sprite.y, camera.currentAngle, camera.data.range, Phaser.Math.DegToRad(38), coneColor);
-      }
-    });
-  }
-
-  private updateLasers(): void {
-    const player = bodyRect(this.playerPosition.x, this.playerPosition.y);
-    this.lasers.forEach((laser) => {
-      const active = this.isLaserActive(laser.data);
-      laser.beam.setVisible(active);
-      laser.glow.setVisible(active);
-      if (!active) {
-        return;
-      }
-
-      const horizontal = laser.data.orientation === "horizontal";
-      const beamRect: Rect = {
-        x: laser.data.x - (horizontal ? laser.data.length / 2 : 5),
-        y: laser.data.y - (horizontal ? 5 : laser.data.length / 2),
-        w: horizontal ? laser.data.length : 10,
-        h: horizontal ? 10 : laser.data.length
-      };
-      if (overlaps(player, beamRect)) {
-        this.triggerDetection();
-      }
-    });
-  }
-
-  private registerExposure(source: string, gain: number): void {
-    if (gain >= this.exposureGain) {
-      this.exposureGain = gain;
-      this.exposureSource = source;
-    }
-  }
-
-  private updateExposure(delta: number): void {
-    if (this.roomState !== "active") {
-      return;
-    }
-
-    if (this.exposureGain > 0) {
-      const lockMs = this.exposureGain >= 1.1 ? 340 : 460;
-      this.exposureLevel = Math.min(1, this.exposureLevel + (delta / lockMs) * this.exposureGain);
-    } else {
-      this.exposureLevel = Math.max(0, this.exposureLevel - delta / 540);
-      if (this.exposureLevel === 0) {
-        this.exposureSource = "";
-      }
-    }
-
-    if (this.exposureLevel >= 1) {
-      this.triggerDetection();
-      this.exposureLevel = 0;
-      this.exposureGain = 0;
-      this.exposureSource = "";
-    }
-  }
-
-  private updateCollectibles(): void {
-    const { audioManager } = getServices(this);
-    this.collectibles.forEach((collectible) => {
-      if (collectible.taken) {
-        return;
-      }
-      const pulse = 0.92 + (Math.sin(this.runTimeMs * 0.007 + collectible.data.x * 0.01) + 1) * 0.08;
-      collectible.shape.setScale(pulse);
-      collectible.glow.setScale(0.92 + pulse * 0.18);
-      if (pointDistance(collectible.data, this.playerPosition) <= 20) {
-        collectible.taken = true;
-        collectible.shape.destroy();
-        collectible.glow.destroy();
-        this.credits += collectible.data.value;
-        audioManager.playUi();
-        const rewardLabel = this.add
-          .text(collectible.data.x, collectible.data.y - 6, `+${collectible.data.value}`, {
-            fontFamily: "Chakra Petch, sans-serif",
-            fontSize: "15px",
-            color: "#ffd76f",
-            fontStyle: "700"
-          })
-          .setOrigin(0.5, 0.5)
-          .setDepth(26);
-        this.tweens.add({
-          targets: rewardLabel,
-          y: collectible.data.y - 30,
-          alpha: 0,
-          duration: 520,
-          onComplete: () => rewardLabel.destroy()
-        });
-      }
-    });
-  }
-
-  private updateCoreAndExit(): void {
-    const nearCore = !this.coreCollected && pointDistance(this.level.core, this.playerPosition) <= INTERACT_DISTANCE;
-    const nearExit = this.coreCollected && overlaps(bodyRect(this.playerPosition.x, this.playerPosition.y), this.level.exit);
-    const pulse = 0.08 + Math.sin(this.runTimeMs * 0.008) * 0.03;
-    const haloPulse = 1 + Math.sin(this.runTimeMs * 0.0056) * 0.08;
-    const coreFloat = Math.sin(this.runTimeMs * 0.004) * 2.4;
-
-    this.core.setY(this.level.core.y + coreFloat);
-    this.coreHalo.setY(this.level.core.y + coreFloat);
-    this.core.setScale(nearCore ? 1.08 : 1);
-    this.core.setAlpha(this.coreCollected ? 0.4 : nearCore ? 0.98 : 0.88);
-    this.coreHalo.setAlpha(this.coreCollected ? 0.04 : nearCore ? 0.2 : 0.12);
-    this.coreHalo.setScale(nearCore ? haloPulse * 1.12 : haloPulse);
-    this.exitGlow.setAlpha(this.coreCollected ? 0.16 + pulse : 0.08);
-    this.exitZone.setAlpha(this.coreCollected ? (nearExit ? 0.34 : 0.22) : 0.12);
-    this.exitZone.setStrokeStyle(2, this.coreCollected ? COLORS.success : COLORS.muted, this.coreCollected ? 0.95 : 0.45);
-  }
-
-  private updateHints(): void {
-    const hint = this.findInteractionHint();
-    this.interactionHint = hint;
-    if (!hint) {
-      this.hintLabel.setText("").setAlpha(0);
-      return;
-    }
-
-    this.hintLabel.setText(hint).setAlpha(0.92);
-  }
-
-  private findInteractionHint(): string {
-    if (this.roomState === "compromised") {
-      return "Alarm triggered. Room rebooting...";
-    }
-
-    if (this.level.tutorial && !this.coreCollected && !this.channels["door-alpha"]) {
-      const plate = this.plates.find((entry) => entry.data.channel === "door-alpha");
-      const playerOnPlate = plate ? overlaps(bodyRect(this.playerPosition.x, this.playerPosition.y), plate.data) : false;
-      if (this.activeEcho) {
-        return `Echo is holding the relay and blinding the watcher. Cross now. If the sentry pins your lane, redeploy a fresh echo burst to spoof him for a moment, then press E to steal ${this.level.payload.name}.`;
-      }
-      if (playerOnPlate) {
-        return "The relay is keyed to echoes only. Step off, then deploy the recorded loop so your clone holds the plate for you.";
-      }
-      if (this.recordedSamples.length < 12) {
-        return "Charge a short loop, end it on the cyan plate, then press Q to deploy the echo.";
-      }
-      return "The cyan plate opens the relay and blinds the watcher, but only when the echo is standing on it. Leave your clone there, cross fast, then use the pillar. A fresh echo burst can spoof the sentry for a couple seconds if you need a clean window.";
-    }
-
-    if (!this.coreCollected && pointDistance(this.playerPosition, this.level.core) <= INTERACT_DISTANCE) {
-      return `${this.level.payload.name} is in reach. Press E to steal it.`;
-    }
-
-    if (this.coreCollected && overlaps(bodyRect(this.playerPosition.x, this.playerPosition.y), this.level.exit)) {
-      return "Exit ready. Press E to exfil.";
-    }
-
-    if (this.exposureLevel > 0.2 && this.exposureSource) {
-      return `${this.exposureSource} at ${Math.round(this.exposureLevel * 100)}%. Break line of sight now.`;
-    }
-
-    const activeBreach = this.getActiveBreachLabel();
-    if (activeBreach) {
-      return this.coreCollected
-        ? `${activeBreach}. Get back through before the facility relocks.`
-        : `${activeBreach}. Steal fast and beat the lockdown.`;
-    }
-
-    const point = { x: this.playerPosition.x, y: this.playerPosition.y };
-    const nearbySwitch = this.switches.find((entry) => pointDistance(point, entry.data) <= INTERACT_DISTANCE);
-    if (nearbySwitch) {
-      return `${nearbySwitch.data.label}. Press E.`;
-    }
-
-    const nearbyTerminal = this.terminals.find((entry) => pointDistance(point, entry.data) <= INTERACT_DISTANCE);
-    if (nearbyTerminal) {
-      return `${nearbyTerminal.data.label}. Interact to start hacking.`;
-    }
-
-    if (!this.coreCollected) {
-      return this.level.tip;
-    }
-
-    return `${this.level.payload.name} secured. Get back to the exit clean.`;
-  }
-
-  private tryInteract(point: Point, actor: "player" | "echo"): void {
-    const { audioManager } = getServices(this);
-
-    if (actor === "player" && !this.coreCollected && pointDistance(point, this.level.core) <= INTERACT_DISTANCE) {
-      this.collectCore();
-      audioManager.playHack();
-      return;
-    }
-
-    if (actor === "player" && this.coreCollected && overlaps(bodyRect(point.x, point.y), this.level.exit)) {
-      this.completeLevel();
-      return;
-    }
-
-    const nearbySwitch = this.switches.find((entry) => pointDistance(point, entry.data) <= INTERACT_DISTANCE);
-    if (nearbySwitch) {
-      this.armTimedChannel(nearbySwitch.data.channel);
-      nearbySwitch.shape.setFillStyle(COLORS.success, 0.2);
-      this.emitNoise({ x: nearbySwitch.data.x, y: nearbySwitch.data.y }, actor === "echo" ? 150 : 132, actor);
-      audioManager.playDoor();
-      return;
-    }
-
-    const nearbyTerminal = this.terminals.find((entry) => pointDistance(point, entry.data) <= INTERACT_DISTANCE);
-    if (nearbyTerminal && !nearbyTerminal.activeHack) {
-      nearbyTerminal.activeHack = {
-        remainingMs: nearbyTerminal.data.hackTimeMs || HACK_DURATION_MS,
-        actor
-      };
-      nearbyTerminal.shape.setFillStyle(COLORS.warning, 0.22);
-      this.emitNoise({ x: nearbyTerminal.data.x, y: nearbyTerminal.data.y }, actor === "echo" ? 168 : 146, actor);
-      audioManager.playHack();
-    }
-  }
-
-  private triggerDetection(): void {
-    const { audioManager } = getServices(this);
-    if (this.detectionCooldown > 0 || this.roomState !== "active") {
-      return;
-    }
-    this.detectionCooldown = DETECTION_COOLDOWN_MS;
-    this.detections += 1;
-    this.roomState = "compromised";
-    this.stateTimer = 900;
-    this.alarmFlashTimer = ALERT_FLASH_MS;
-    this.destroyEcho();
-    audioManager.setMusicMode("alarm");
-    this.showBanner("COMPROMISED", "The facility clocked the real you. Room reboot in progress.", 900);
-    this.cameras.main.shake(140, 0.004);
-    audioManager.playDetect();
-  }
-
+  /* ── HUD ──────────────────────────────────────────────────────────────── */
   private refreshHud(): void {
-    const { uiManager, saveManager, audioManager } = getServices(this);
-    const elapsedSeconds = this.runTimeMs / 1000;
-    const bufferDuration =
-      this.recordedSamples.length > 1 ? this.recordedSamples[this.recordedSamples.length - 1]!.t - this.recordedSamples[0]!.t : 0;
-
-    const hudState: HudState = {
-      levelLabel: this.level.name,
-      timeLabel: `${elapsedSeconds.toFixed(1)}s`,
-      detections: this.detections,
-      objective: this.getObjectiveLabel(),
-      echoCharge: Phaser.Math.Clamp(bufferDuration / ECHO_DURATION_MS, 0, 1),
-      credits: this.credits,
-      interactionHint: this.interactionHint,
-      breachLabel: this.getActiveBreachLabel(),
-      traceLabel: this.exposureLevel > 0 ? `${this.exposureSource || "TRACE"} ${Math.round(this.exposureLevel * 100)}%` : ""
+    const {uiManager,audioManager}=getServices(this);
+    const dur=this.recorded.length>1?this.recorded[this.recorded.length-1]!.t-this.recorded[0]!.t:0;
+    const hud:HudState={
+      levelLabel:this.level.name, timeLabel:`${(this.runMs/1000).toFixed(1)}s`,
+      detections:this.detections, objective:this.coreGot?"Reach the exit gate.":this.level.tip,
+      echoCharge:Phaser.Math.Clamp(dur/ECHO_DURATION_MS,0,1),
+      credits:this.credits, interactionHint:this.hint,
+      breachLabel:this.breachLabel(), traceLabel:this.exposureLevel>0?`${this.exposureSrc||"TRACE"} ${Math.round(this.exposureLevel*100)}%`:""
     };
-
-    uiManager.renderHud(hudState, () => {
+    uiManager.renderHud(hud,()=>{
       audioManager.playUi();
-      this.scene.launch(SCENE_KEYS.PAUSE, { levelId: this.level.id });
+      this.scene.launch(SCENE_KEYS.PAUSE,{levelId:this.level.id});
       this.scene.pause();
     });
-
-    uiManager.applySettings(saveManager.getSettings());
   }
 
-  private completeLevel(): void {
-    if (this.roomState !== "active") {
-      return;
-    }
+  private breachLabel(): string {
+    const e=Object.entries(this.chTimers).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1])[0];
+    return e?`BREACH ${(e[1]/1000).toFixed(1)}s`:"";
+  }
 
-    this.roomState = "complete";
-    const { saveManager, levelManager, audioManager } = getServices(this);
-    const nextLevelId = levelManager.getNextLevelId(this.level.id);
-    const timeSeconds = this.runTimeMs / 1000;
-    const rank = this.getRank(timeSeconds, this.detections);
-    const breakdown = [
-      { label: "Contract base", value: 2500 },
-      { label: "Recovered credits", value: this.credits * 4 },
-      { label: "Ghost bonus", value: this.detections === 0 ? 260 : 0 },
-      { label: "Tempo pressure", value: -Math.round(timeSeconds * 16) },
-      { label: "Alert penalty", value: -this.detections * 180 },
-      { label: "Echo overspend", value: -Math.max(0, this.echoesUsed - this.level.parEchoes) * 70 }
+  /* ── level complete ───────────────────────────────────────────────────── */
+  private finishLevel(): void {
+    if(this.state!=="active") return;
+    this.state="complete";
+    const {saveManager,levelManager,audioManager}=getServices(this);
+    const nextId=levelManager.getNextLevelId(this.level.id);
+    const ms=Math.round(this.runMs), sec=ms/1000;
+    const rank=this.calcRank(sec,this.detections);
+    const bd:ScoreBreakdownItem[]=[
+      {label:"Contract base",     value:2500},
+      {label:"Recovered credits", value:this.credits*4},
+      {label:"Ghost bonus",       value:this.detections===0?280:0},
+      {label:"Echo economy",      value:Math.max(0,(this.level.parEchoes+1-this.echoUses))*80},
+      {label:"Tempo pressure",    value:-Math.round(sec*16)},
+      {label:"Alert penalty",     value:-this.detections*180}
     ];
-    const score = Math.max(400, breakdown.reduce((total, item) => total + item.value, 0));
-
-    const result: LevelResult = {
-      levelId: this.level.id,
-      levelName: this.level.name,
-      payloadName: this.level.payload.name,
-      payloadDescription: this.level.payload.description,
-      timeMs: Math.round(this.runTimeMs),
-      detections: this.detections,
-      credits: this.credits,
-      echoesUsed: this.echoesUsed,
-      score,
-      scoreBreakdown: breakdown,
-      rank,
-      nextLevelId
+    const score=Math.max(400,bd.reduce((a,b)=>a+b.value,0));
+    const result:LevelResult={
+      levelId:this.level.id,levelName:this.level.name,
+      payloadName:this.level.payload.name,payloadDescription:this.level.payload.description,
+      timeMs:ms,detections:this.detections,credits:this.credits,echoesUsed:this.echoUses,
+      score,scoreBreakdown:bd,rank,nextLevelId:nextId
     };
-
-    saveManager.recordResult(result, this.level.order);
-    audioManager.setMusicMode("result");
+    saveManager.recordResult(result,this.level.order);
     audioManager.playSuccess();
-    this.scene.start(SCENE_KEYS.RESULTS, { result });
+    this.cameras.main.fadeOut(240,0,0,0);
+    this.time.delayedCall(260,()=>this.scene.start(SCENE_KEYS.RESULTS,{result}));
   }
 
-  private getActiveBreachLabel(): string {
-    const activeTimers = Object.values(this.channelTimers);
-    if (activeTimers.length === 0) {
-      return "";
-    }
-    const nextClose = Math.min(...activeTimers);
-    return `Relock in ${(nextClose / 1000).toFixed(1)}s`;
-  }
-
-  private getRank(timeSeconds: number, detections: number): LevelResult["rank"] {
-    if (detections === 0 && timeSeconds <= this.level.timeTargets.s) {
-      return "S";
-    }
-    if (detections <= 1 && timeSeconds <= this.level.timeTargets.a) {
-      return "A";
-    }
-    if (detections <= 3 && timeSeconds <= this.level.timeTargets.b) {
-      return "B";
-    }
+  private calcRank(sec: number, det: number): import("../types").Rank {
+    const t=this.level.timeTargets;
+    if(sec<=t.s&&det===0) return "S";
+    if(sec<=t.a&&det<=1)  return "A";
+    if(sec<=t.b&&det<=2)  return "B";
     return "C";
   }
 
-  private refreshExtractionWindow(): void {
-    const extractionChannels = this.getLockdownChannels();
-    const returnWindow = Math.max(3200, Math.round(this.getBreachWindowMs() * 0.72));
+  /* ── banner ───────────────────────────────────────────────────────────── */
+  private showBanner(text: string, ms: number): void {
+    this.bannerTxt.setText(text).setAlpha(0.96);
+    window.clearTimeout(this.bannerTimer);
+    this.bannerTimer=window.setTimeout(()=>{
+      this.tweens.add({targets:this.bannerTxt,alpha:0,duration:600});
+    },ms);
+  }
+  private tickBanner(_dt: number): void { /* managed by setTimeout+tween */ }
 
-    extractionChannels.forEach((channel) => {
-      const current = this.channelTimers[channel] ?? 0;
-      this.armTimedChannel(channel, Math.max(current, returnWindow));
-    });
-
-    this.showBanner(
-      "CORE SECURED",
-      `Extraction clock started. The facility relocks in ${(returnWindow / 1000).toFixed(1)}s. Redeploy the echo and run.`,
-      2600
-    );
+  /* ── draw helpers ─────────────────────────────────────────────────────── */
+  private drawCone(g: Phaser.GameObjects.Graphics, ox: number, oy: number, angle: number, range: number, half: number, col: number): void {
+    g.clear();
+    g.fillStyle(col,0.09); g.lineStyle(1,col,0.22);
+    g.beginPath(); g.moveTo(ox,oy);
+    const steps=10;
+    for(let i=0;i<=steps;i++){const a=angle-half+(i/steps)*half*2;g.lineTo(ox+Math.cos(a)*range,oy+Math.sin(a)*range);}
+    g.closePath(); g.fillPath(); g.strokePath();
   }
 
-  private getLockdownChannels(): string[] {
-    const channels = new Set<string>();
-    this.level.doors.forEach((door) => channels.add(door.channel));
-    this.level.lasers.forEach((laser) => {
-      if (laser.channel) {
-        channels.add(laser.channel);
-      }
-    });
-    this.level.cameras.forEach((camera) => {
-      if (camera.channel) {
-        channels.add(camera.channel);
-      }
-    });
-    return [...channels];
+  private drawPulse(pt: Point, col: number, r: number, a: number): void {
+    this.objOvl.lineStyle(2,col,a); this.objOvl.strokeCircle(pt.x,pt.y,r);
+    this.objOvl.lineStyle(1,col,a*0.5); this.objOvl.strokeCircle(pt.x,pt.y,r+7);
   }
 
-  private getBlockingRects(): Rect[] {
-    return [...this.level.walls, ...this.closedDoorRects];
-  }
-
-  private renderWall(wall: Rect, accent: number, index: number): void {
-    const centerX = wall.x + wall.w / 2;
-    const centerY = wall.y + wall.h / 2;
-    const horizontal = wall.w >= wall.h;
-    const innerWidth = Math.max(16, wall.w - 18);
-    const innerHeight = Math.max(16, wall.h - 18);
-
-    this.add.rectangle(centerX + 5, centerY + 7, wall.w + 22, wall.h + 22, 0x02050d, 0.34).setDepth(8);
-    this.add.rectangle(centerX, centerY, wall.w + 18, wall.h + 18, accent, 0.045).setDepth(9);
-    this.add.rectangle(centerX, centerY, wall.w + 8, wall.h + 8, 0x091221, 0.96).setDepth(10);
-    this.add
-      .rectangle(centerX, centerY, wall.w, wall.h, 0x132741, 1)
-      .setStrokeStyle(2, 0x6eb8ff, 0.28)
-      .setDepth(12);
-    this.add
-      .rectangle(centerX, centerY, innerWidth, innerHeight, 0x0b1729, 0.74)
-      .setStrokeStyle(1, 0xffffff, 0.04)
-      .setDepth(13);
-
-    const stripe = this.add.graphics().setDepth(14);
-    stripe.lineStyle(3, accent, 0.22);
-    if (horizontal) {
-      stripe.lineBetween(wall.x + 18, wall.y + 10, wall.x + wall.w - 18, wall.y + 10);
-      stripe.lineStyle(1, 0xffffff, 0.05);
-      stripe.lineBetween(wall.x + 18, wall.y + wall.h - 12, wall.x + wall.w - 18, wall.y + wall.h - 12);
-    } else {
-      stripe.lineBetween(wall.x + 10, wall.y + 18, wall.x + 10, wall.y + wall.h - 18);
-      stripe.lineStyle(1, 0xffffff, 0.05);
-      stripe.lineBetween(wall.x + wall.w - 12, wall.y + 18, wall.x + wall.w - 12, wall.y + wall.h - 18);
-    }
-
-    const nodeCount = Phaser.Math.Clamp(Math.round((horizontal ? wall.w : wall.h) / 180), 1, 3);
-    for (let nodeIndex = 0; nodeIndex < nodeCount; nodeIndex += 1) {
-      const ratio = nodeCount === 1 ? 0.5 : nodeIndex / (nodeCount - 1);
-      const nodeX = horizontal ? Phaser.Math.Linear(wall.x + 20, wall.x + wall.w - 20, ratio) : centerX;
-      const nodeY = horizontal ? centerY : Phaser.Math.Linear(wall.y + 20, wall.y + wall.h - 20, ratio);
-      const width = horizontal ? 20 : 12;
-      const height = horizontal ? 12 : 20;
-      const tint = nodeIndex % 2 === index % 2 ? accent : 0xb6e4ff;
-      this.add
-        .rectangle(nodeX, nodeY, width, height, tint, 0.34)
-        .setStrokeStyle(1, 0xffffff, 0.08)
-        .setDepth(14);
-    }
-  }
-
-  private collectCore(): void {
-    if (this.coreCollected) {
-      return;
-    }
-
-    this.coreCollected = true;
-    this.core.setTint(COLORS.success);
-    this.core.setAlpha(0.4);
-    this.coreHalo.setAlpha(0.08);
-    this.emitNoise({ x: this.level.core.x, y: this.level.core.y }, 236, "system");
-    this.refreshExtractionWindow();
-    this.showBanner(
-      "PAYLOAD SECURED",
-      `${this.level.payload.name} is live. ${this.level.payload.description} Extraction clock started. Redeploy the echo and get out.`,
-      2800
-    );
-    this.cameras.main.shake(120, 0.0022);
-    this.cameras.main.flash(160, 120, 255, 220, false);
-  }
-
-  private getObjectiveLabel(): string {
-    if (this.roomState === "compromised") {
-      return "Alarm triggered";
-    }
-
-    if (this.level.tutorial) {
-      const tutorialStage = this.getTutorialStage();
-      if (tutorialStage === 0) {
-        return "Step 1 // Echo-breach the relay";
-      }
-      if (tutorialStage === 1) {
-        return `Step 2 // Steal ${this.level.payload.name}`;
-      }
-      return `Step 3 // Exfil with ${this.level.payload.name}`;
-    }
-
-    if (!this.coreCollected) {
-      return `Steal ${this.level.payload.name}`;
-    }
-
-    if (this.getActiveBreachLabel()) {
-      return `Extract ${this.level.payload.name}`;
-    }
-
-    return `Exfil with ${this.level.payload.name}`;
-  }
-
-  private showBanner(title: string, subtitle: string, durationMs: number): void {
-    this.bannerTitle.setText(title);
-    this.bannerSubtitle.setText(subtitle);
-    this.bannerTitle.setAlpha(1);
-    this.bannerSubtitle.setAlpha(0.95);
-    this.bannerTimer = durationMs;
-  }
-
-  private updateBanner(delta: number): void {
-    if (this.bannerTimer <= 0) {
-      this.bannerTitle.setAlpha(0);
-      this.bannerSubtitle.setAlpha(0);
-      return;
-    }
-
-    this.bannerTimer = Math.max(0, this.bannerTimer - delta);
-    const alpha = this.bannerTimer > 900 ? 1 : Phaser.Math.Clamp(this.bannerTimer / 900, 0, 1);
-    this.bannerTitle.setAlpha(alpha);
-    this.bannerSubtitle.setAlpha(alpha * 0.92);
-  }
-
-  private updateTutorialBeat(): void {
-    if (!this.level.tutorial || this.roomState !== "active") {
-      return;
-    }
-
-    const stage = this.getTutorialStage();
-    if (stage === this.tutorialBeat) {
-      return;
-    }
-
-    this.tutorialBeat = stage;
-    if (stage === 0) {
-      this.showBanner(
-        "STEP 1 // PRINT THE LOOP",
-        "End your recording on the cyan plate. Only the echo can hold the relay long enough to crack the breach and blind the watcher.",
-        3000
+  private drawDash(a: Point, b: Point, col: number, alpha: number, phase: number): void {
+    const d=dist(a,b), steps=Math.floor(d/16);
+    for(let i=0;i<steps;i++){
+      if((i+phase)%2!==0) continue;
+      const t0=i/steps, t1=Math.min(1,(i+0.7)/steps);
+      this.logicOvl.lineStyle(1,col,alpha);
+      this.logicOvl.lineBetween(
+        Phaser.Math.Linear(a.x,b.x,t0),Phaser.Math.Linear(a.y,b.y,t0),
+        Phaser.Math.Linear(a.x,b.x,t1),Phaser.Math.Linear(a.y,b.y,t1)
       );
-      return;
-    }
-
-    if (stage === 1) {
-      this.showBanner(
-        "STEP 2 // COMMIT",
-        `The breach clock is running. Cross while the camera is blind, use the pillar to break the sentry's line, and if he pins you, trigger a fresh echo burst to spoof him before you steal ${this.level.payload.name}.`,
-        2800
-      );
-      return;
-    }
-
-    this.showBanner("STEP 3 // VANISH", `Payload lifted. The gate is hot again. Get ${this.level.payload.name} out clean.`, 2400);
-  }
-
-  private getTutorialStage(): number {
-    if (!this.channels["door-alpha"]) {
-      return 0;
-    }
-    if (!this.coreCollected) {
-      return 1;
-    }
-    return 2;
-  }
-
-  private getChannelTargets(channel: string): Point[] {
-    return [
-      ...this.level.doors
-        .filter((entry) => entry.channel === channel)
-        .map((entry) => ({ x: entry.x + entry.w / 2, y: entry.y + entry.h / 2 })),
-      ...this.level.lasers.filter((entry) => entry.channel === channel).map((entry) => ({ x: entry.x, y: entry.y })),
-      ...this.level.cameras.filter((entry) => entry.channel === channel).map((entry) => ({ x: entry.x, y: entry.y }))
-    ];
-  }
-
-  private drawDataLink(from: Point, to: Point, color: number, alpha: number, phase: number): void {
-    const distance = pointDistance(from, to);
-    const segments = Math.max(3, Math.floor(distance / 34));
-    for (let index = 0; index < segments; index += 1) {
-      if ((index + phase) % 2 !== 0) {
-        continue;
-      }
-      const startT = index / segments;
-      const endT = Math.min(1, (index + 0.75) / segments);
-      const startX = Phaser.Math.Linear(from.x, to.x, startT);
-      const startY = Phaser.Math.Linear(from.y, to.y, startT);
-      const endX = Phaser.Math.Linear(from.x, to.x, endT);
-      const endY = Phaser.Math.Linear(from.y, to.y, endT);
-      this.logicOverlay.lineStyle(2, color, alpha);
-      this.logicOverlay.lineBetween(startX, startY, endX, endY);
     }
   }
 
-  private drawObjectivePulse(center: Point, color: number, radius: number, alpha: number): void {
-    this.objectiveOverlay.lineStyle(2, color, 0.34 + alpha * 0.18);
-    this.objectiveOverlay.strokeCircle(center.x, center.y, radius);
-    this.objectiveOverlay.lineStyle(1, color, 0.18 + alpha * 0.12);
-    this.objectiveOverlay.strokeCircle(center.x, center.y, radius + 12);
-    this.objectiveOverlay.fillStyle(color, 0.12 + alpha * 0.12);
-    this.objectiveOverlay.fillCircle(center.x, center.y, 9);
-  }
-
-  private drawVisionCone(
-    graphics: Phaser.GameObjects.Graphics,
-    x: number,
-    y: number,
-    angle: number,
-    range: number,
-    spread: number,
-    color: number
-  ): void {
-    graphics.clear();
-    graphics.fillStyle(color, 0.09);
-    graphics.beginPath();
-    graphics.moveTo(x, y);
-    graphics.lineTo(x + Math.cos(angle - spread / 2) * range, y + Math.sin(angle - spread / 2) * range);
-    graphics.lineTo(x + Math.cos(angle + spread / 2) * range, y + Math.sin(angle + spread / 2) * range);
-    graphics.closePath();
-    graphics.fillPath();
-    graphics.lineStyle(1, color, 0.26);
-    graphics.strokePath();
-  }
-
-  private canSeeTarget(
-    originObject: Phaser.GameObjects.Image,
-    angle: number,
-    range: number,
-    spread: number,
-    target: Point
-  ): boolean {
-    const distance = Phaser.Math.Distance.Between(originObject.x, originObject.y, target.x, target.y);
-    if (distance > range) {
-      return false;
-    }
-
-    const targetAngle = Phaser.Math.Angle.Between(originObject.x, originObject.y, target.x, target.y);
-    const angleDelta = Phaser.Math.Angle.Wrap(targetAngle - angle);
-    if (Math.abs(angleDelta) > spread / 2) {
-      return false;
-    }
-
-    return !this.isVisionBlocked({ x: originObject.x, y: originObject.y }, target);
-  }
-
-  private isVisionBlocked(origin: Point, target: Point): boolean {
-    const blockers = this.getBlockingRects();
-    const distance = pointDistance(origin, target);
-    const sampleCount = Math.max(8, Math.ceil(distance / 14));
-    for (let step = 1; step <= sampleCount; step += 1) {
-      const t = step / sampleCount;
-      const x = Phaser.Math.Linear(origin.x, target.x, t);
-      const y = Phaser.Math.Linear(origin.y, target.y, t);
-      const pointRect = { x: x - 2, y: y - 2, w: 4, h: 4 };
-      if (blockers.some((rect) => overlaps(pointRect, rect))) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private isLaserActive(laser: LaserData): boolean {
-    let active = true;
-    if (laser.channel) {
-      const channelActive = Boolean(this.channels[laser.channel]);
-      active = laser.activeWhen === "inactive" ? !channelActive : channelActive;
-    }
-
-    if (active && laser.cycle) {
-      const total = laser.cycle.onMs + laser.cycle.offMs;
-      const offset = laser.cycle.offsetMs ?? 0;
-      const localTime = (this.runTimeMs + offset) % total;
-      active = localTime < laser.cycle.onMs;
-    }
-
-    return active;
-  }
-
-  private animateBackground(delta: number): void {
-    this.ambientLines.forEach((line, index) => {
-      line.alpha = 0.08 + (Math.sin(this.runTimeMs * 0.0016 + index) + 1) * 0.06;
-      line.rotation += delta * 0.00001 * (index % 2 === 0 ? 1 : -1);
-    });
+  private chTargetPts(ch: string): Point[] {
+    const pts:Point[]=[];
+    this.doors.forEach(d=>{if(d.data.channel===ch)pts.push({x:d.data.x+d.data.w/2,y:d.data.y+d.data.h/2});});
+    this.lasers.forEach(l=>{if(l.data.channel===ch)pts.push({x:l.data.x,y:l.data.y});});
+    this.camSensors.forEach(c=>{if(c.data.channel===ch)pts.push({x:c.data.x,y:c.data.y});});
+    return pts;
   }
 }

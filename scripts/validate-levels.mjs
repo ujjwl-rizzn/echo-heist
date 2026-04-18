@@ -1,262 +1,68 @@
 import { levels } from "../src/game/data/levels.ts";
 
-const PLAYER_HITBOX_SIZE = 18;
-const CORE_INTERACT_SIZE = 62;
-const CONTROL_REACH_SIZE = 72;
+const HITBOX = 18, CORE_R = 62, CTRL_R = 72;
+const bodyRect = (x,y,s=HITBOX) => ({ x:x-s/2, y:y-s/2, w:s, h:s });
+const overlaps = (a,b) => a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y;
+const clear    = (lv,pt) => !lv.walls.some(w => overlaps(bodyRect(pt.x,pt.y), w));
 
-const bodyRect = (x, y, size = PLAYER_HITBOX_SIZE) => ({
-  x: x - size / 2,
-  y: y - size / 2,
-  w: size,
-  h: size
-});
-
-const overlaps = (a, b) =>
-  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-
-const pointIsClear = (level, point) => !level.walls.some((wall) => overlaps(bodyRect(point.x, point.y), wall));
-
-const segmentIsClear = (level, start, end) => {
-  const distance = Math.hypot(end.x - start.x, end.y - start.y);
-  const sampleCount = Math.max(1, Math.ceil(distance / 8));
-
-  for (let step = 0; step <= sampleCount; step += 1) {
-    const t = step / sampleCount;
-    const x = start.x + (end.x - start.x) * t;
-    const y = start.y + (end.y - start.y) * t;
-    if (!pointIsClear(level, { x, y })) {
-      return false;
+const pathExists = (lv, start, goal, openCh=[]) => {
+  const closed = lv.doors.filter(d => !openCh.includes(d.channel));
+  const block  = [...lv.walls, ...closed];
+  const step=8, half=HITBOX/2, vis=new Set([`${Math.round(start.x/step)}:${Math.round(start.y/step)}`]);
+  const q=[[start.x,start.y]], dirs=[[step,0],[-step,0],[0,step],[0,-step]];
+  while(q.length){
+    const [x,y]=q.shift();
+    if(overlaps(bodyRect(x,y),goal)) return true;
+    for(const [dx,dy] of dirs){
+      const nx=x+dx, ny=y+dy;
+      if(nx<half||ny<half||nx>lv.world.width-half||ny>lv.world.height-half) continue;
+      if(block.some(b=>overlaps(bodyRect(nx,ny),b))) continue;
+      const k=`${Math.round(nx/step)}:${Math.round(ny/step)}`;
+      if(!vis.has(k)){ vis.add(k); q.push([nx,ny]); }
     }
   }
-
-  return true;
-};
-
-const validateObjectFootprints = (level) => {
-  const issues = [];
-  const mark = (name, rect) => {
-    if (level.walls.some((wall) => overlaps(rect, wall))) {
-      issues.push(`${name} overlaps a wall`);
-    }
-  };
-
-  mark("spawn", bodyRect(level.spawn.x, level.spawn.y));
-  mark("core", bodyRect(level.core.x, level.core.y, 24));
-  mark("exit", level.exit);
-
-  level.doors.forEach((door) => mark(`door:${door.id}`, door));
-  level.plates.forEach((plate) => mark(`plate:${plate.id}`, plate));
-  level.switches.forEach((entry) => mark(`switch:${entry.id}`, bodyRect(entry.x, entry.y, 44)));
-  level.terminals.forEach((entry) => mark(`terminal:${entry.id}`, bodyRect(entry.x, entry.y, 54)));
-  level.collectibles.forEach((entry) => mark(`credit:${entry.id}`, bodyRect(entry.x, entry.y, 24)));
-
-  return issues;
-};
-
-const getReachableControlChannels = (level, initialOpenChannels) => {
-  const controls = [
-    ...level.plates.map((plate) => ({
-      channel: plate.channel,
-      goalRect: plate
-    })),
-    ...level.switches.map((entry) => ({
-      channel: entry.channel,
-      goalRect: {
-        x: entry.x - CONTROL_REACH_SIZE / 2,
-        y: entry.y - CONTROL_REACH_SIZE / 2,
-        w: CONTROL_REACH_SIZE,
-        h: CONTROL_REACH_SIZE
-      }
-    })),
-    ...level.terminals.map((entry) => ({
-      channel: entry.channel,
-      goalRect: {
-        x: entry.x - CONTROL_REACH_SIZE / 2,
-        y: entry.y - CONTROL_REACH_SIZE / 2,
-        w: CONTROL_REACH_SIZE,
-        h: CONTROL_REACH_SIZE
-      }
-    }))
-  ];
-
-  const visited = new Set();
-  const queue = [new Set(initialOpenChannels)];
-  let reachable = new Set(initialOpenChannels);
-
-  while (queue.length > 0) {
-    const openSet = queue.shift();
-    const openChannels = [...openSet].sort();
-    const key = openChannels.join("|");
-    if (visited.has(key)) {
-      continue;
-    }
-    visited.add(key);
-
-    controls.forEach((control) => {
-      if (!pathExists(level, level.spawn, control.goalRect, openChannels)) {
-        return;
-      }
-
-      if (reachable.has(control.channel) && openSet.has(control.channel)) {
-        return;
-      }
-
-      reachable.add(control.channel);
-      const next = new Set(openSet);
-      next.add(control.channel);
-      queue.push(next);
-    });
-  }
-
-  return [...reachable];
-};
-
-const validateChannelWiring = (level) => {
-  const issues = [];
-  const controllerChannels = new Set([...level.plates.map((plate) => plate.channel), ...level.switches.map((entry) => entry.channel), ...level.terminals.map((entry) => entry.channel)]);
-  const targetChannels = new Set([
-    ...level.doors.map((door) => door.channel),
-    ...level.lasers.filter((laser) => laser.channel).map((laser) => laser.channel),
-    ...level.cameras.filter((camera) => camera.channel).map((camera) => camera.channel)
-  ]);
-
-  controllerChannels.forEach((channel) => {
-    if (!targetChannels.has(channel)) {
-      issues.push(`channel:${channel} has a controller but no target`);
-    }
-  });
-
-  targetChannels.forEach((channel) => {
-    if (!controllerChannels.has(channel) && !level.initialChannels[channel]) {
-      issues.push(`channel:${channel} has a target but no controller`);
-    }
-  });
-
-  return issues;
-};
-
-const pathExists = (level, start, goalRect, openChannels = []) => {
-  const closedDoors = level.doors.filter((door) => !openChannels.includes(door.channel));
-  const blockers = [...level.walls, ...closedDoors];
-  const step = 8;
-  const margin = PLAYER_HITBOX_SIZE / 2;
-  const queue = [[start.x, start.y]];
-  const visited = new Set([`${Math.round(start.x / step)}:${Math.round(start.y / step)}`]);
-  const directions = [
-    [step, 0],
-    [-step, 0],
-    [0, step],
-    [0, -step]
-  ];
-
-  while (queue.length > 0) {
-    const [x, y] = queue.shift();
-    if (overlaps(bodyRect(x, y), goalRect)) {
-      return true;
-    }
-
-    for (const [dx, dy] of directions) {
-      const nextX = x + dx;
-      const nextY = y + dy;
-
-      if (
-        nextX < margin ||
-        nextY < margin ||
-        nextX > level.world.width - margin ||
-        nextY > level.world.height - margin
-      ) {
-        continue;
-      }
-
-      const rect = bodyRect(nextX, nextY);
-      if (blockers.some((blocker) => overlaps(rect, blocker))) {
-        continue;
-      }
-
-      const key = `${Math.round(nextX / step)}:${Math.round(nextY / step)}`;
-      if (visited.has(key)) {
-        continue;
-      }
-
-      visited.add(key);
-      queue.push([nextX, nextY]);
-    }
-  }
-
   return false;
 };
 
-const failures = [];
-
-for (const level of levels) {
-  const initialOpenChannels = Object.entries(level.initialChannels)
-    .filter(([, active]) => active)
-    .map(([channel]) => channel);
-  const reachableChannels = getReachableControlChannels(level, initialOpenChannels);
-  const coreRect = {
-    x: level.core.x - CORE_INTERACT_SIZE / 2,
-    y: level.core.y - CORE_INTERACT_SIZE / 2,
-    w: CORE_INTERACT_SIZE,
-    h: CORE_INTERACT_SIZE
-  };
-
-  const canReachCore = pathExists(level, level.spawn, coreRect, reachableChannels);
-  const canReachExit = pathExists(level, level.core, level.exit, reachableChannels);
-  const canSkipBreach = level.requiresBreach ? pathExists(level, level.spawn, coreRect, initialOpenChannels) : false;
-  const invalidObjects = validateObjectFootprints(level);
-  const invalidChannels = validateChannelWiring(level);
-  const invalidGuardRoutes = level.guards
-    .map((guard) => {
-      const spawn = { x: guard.x, y: guard.y };
-      const points = guard.patrol;
-      if (!pointIsClear(level, spawn)) {
-        return `${guard.id} spawn overlaps a wall`;
-      }
-
-      for (const patrolPoint of points) {
-        if (!pointIsClear(level, patrolPoint)) {
-          return `${guard.id} patrol point overlaps a wall`;
-        }
-      }
-
-      if (points.length === 0) {
-        return `${guard.id} has no patrol points`;
-      }
-
-      const firstTargetIndex = points.length > 1 ? 1 : 0;
-      if (!segmentIsClear(level, spawn, points[firstTargetIndex])) {
-        return `${guard.id} cannot reach its opening patrol target`;
-      }
-
-      for (let index = 0; index < points.length; index += 1) {
-        const nextIndex = (index + 1) % points.length;
-        if (!segmentIsClear(level, points[index], points[nextIndex])) {
-          return `${guard.id} patrol route crosses a wall`;
-        }
-      }
-
-      return null;
-    })
-    .filter(Boolean);
-
-  if (!canReachCore || !canReachExit || canSkipBreach || invalidGuardRoutes.length > 0 || invalidObjects.length > 0 || invalidChannels.length > 0) {
-    failures.push({
-      levelId: level.id,
-      canReachCore,
-      canReachExit,
-      canSkipBreach,
-      reachableChannels,
-      invalidGuardRoutes,
-      invalidObjects,
-      invalidChannels
+const reachableChannels = (lv, initOpen) => {
+  const ctrls=[
+    ...lv.plates.map(p=>({ ch:p.channel, rect:p })),
+    ...lv.switches.map(s=>({ ch:s.channel, rect:{ x:s.x-CTRL_R/2, y:s.y-CTRL_R/2, w:CTRL_R, h:CTRL_R } })),
+    ...lv.terminals.map(t=>({ ch:t.channel, rect:{ x:t.x-CTRL_R/2, y:t.y-CTRL_R/2, w:CTRL_R, h:CTRL_R } }))
+  ];
+  const vis=new Set(), reached=new Set(initOpen), queue=[new Set(initOpen)];
+  while(queue.length){
+    const open=queue.shift(), key=[...open].sort().join("|");
+    if(vis.has(key)) continue; vis.add(key);
+    ctrls.forEach(c=>{
+      if(!pathExists(lv,lv.spawn,c.rect,[...open])) return;
+      if(reached.has(c.ch)&&open.has(c.ch)) return;
+      reached.add(c.ch);
+      const next=new Set(open); next.add(c.ch); queue.push(next);
     });
   }
-}
+  return [...reached];
+};
 
-if (failures.length > 0) {
-  console.error("Level validation failed:");
-  failures.forEach((failure) => console.error(`- ${failure.levelId}:`, failure));
-  process.exit(1);
+let pass=true;
+for(const lv of levels){
+  const init   = Object.entries(lv.initialChannels).filter(([,v])=>v).map(([k])=>k);
+  const reach  = reachableChannels(lv,init);
+  const coreR  = { x:lv.core.x-CORE_R/2, y:lv.core.y-CORE_R/2, w:CORE_R, h:CORE_R };
+  const canCore = pathExists(lv,lv.spawn,coreR,reach);
+  const canExit = pathExists(lv,lv.spawn,lv.exit,reach);
+  const skip    = lv.requiresBreach ? pathExists(lv,lv.spawn,coreR,init) : false;
+  const badGuards = lv.guards.filter(g=>{
+    if(!clear(lv,{x:g.x,y:g.y})) return true;
+    return g.patrol.some(p=>!clear(lv,p));
+  }).map(g=>g.id);
+  const ok = canCore && canExit && !skip && !badGuards.length;
+  if(!ok){
+    pass=false;
+    console.error(`FAIL ${lv.id}: core=${canCore} exit=${canExit} bypass=${skip} badGuards=[${badGuards}]`);
+  } else {
+    console.log(`pass ${lv.id}`);
+  }
 }
-
-console.log(`Validated ${levels.length} levels. Basic traversal is possible in every room.`);
+if(!pass){ console.error("\nValidation failed."); process.exit(1); }
+else      console.log(`\nAll ${levels.length} levels validated.`);

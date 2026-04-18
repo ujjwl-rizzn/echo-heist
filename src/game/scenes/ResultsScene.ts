@@ -4,65 +4,44 @@ import type { LevelResult } from "../types";
 import { getServices } from "../utils/services";
 
 export class ResultsScene extends Phaser.Scene {
-  constructor() {
-    super(SCENE_KEYS.RESULTS);
-  }
+  constructor() { super(SCENE_KEYS.RESULTS); }
 
-  create(data: { result: LevelResult } | undefined): void {
+  create(data: { result?:LevelResult } | undefined): void {
     const result = data?.result;
-    if (!result) {
-      this.scene.start(SCENE_KEYS.MENU);
-      return;
-    }
+    if (!result) { this.scene.start(SCENE_KEYS.MENU); return; }
 
-    const { uiManager, audioManager, rewardManager } = getServices(this);
+    const { uiManager, audioManager, rewardManager, saveManager } = getServices(this);
     audioManager.setMusicMode("result");
     let rewardClaimed = false;
 
-    const render = (message?: { tone: "info" | "success" | "warning"; text: string }): void => {
+    /* check if all 8 levels are now complete */
+    const save = saveManager.getData();
+    const allDone = Object.values(save.levels).filter(l => l.completed).length >= 8;
+
+    const render = (notice?: { tone:"info"|"success"|"warning"; text:string }) => {
       uiManager.showResults(
         result,
         {
-          onRetry: () => {
-            audioManager.playUi();
-            this.scene.start(SCENE_KEYS.GAME, { levelId: result.levelId });
-          },
-          onNext: result.nextLevelId
-            ? () => {
-                audioManager.playUi();
-                this.scene.start(SCENE_KEYS.GAME, { levelId: result.nextLevelId });
-              }
+          onRetry:  () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.GAME, { levelId:result.levelId }); },
+          onNext:   result.nextLevelId
+            ? () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.GAME, { levelId:result.nextLevelId }); }
             : null,
-          onLevels: () => {
+          onLevels: () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.LEVEL_SELECT); },
+          onMenu:   () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.MENU); },
+          onSponsorBoost: rewardClaimed ? undefined : async () => {
             audioManager.playUi();
-            this.scene.start(SCENE_KEYS.LEVEL_SELECT);
-          },
-          onMenu: () => {
-            audioManager.playUi();
-            this.scene.start(SCENE_KEYS.MENU);
-          },
-          onSponsorBoost: rewardClaimed
-            ? undefined
-            : async () => {
-                audioManager.playUi();
-                const reward = await rewardManager.claimResultBoost(result);
-                if (reward.status === "granted") {
-                  rewardClaimed = true;
-                  audioManager.playSuccess();
-                } else {
-                  audioManager.playUi();
-                }
-                render({
-                  tone: reward.status === "granted" ? "success" : reward.status === "unavailable" ? "warning" : "info",
-                  text:
-                    reward.status === "granted"
-                      ? `${reward.message} Total credits: ${reward.totalCredits}.`
-                      : reward.message
-                });
-              }
+            const r = await rewardManager.claimResultBoost(result);
+            if (r.status === "granted") { rewardClaimed = true; audioManager.playSuccess(); }
+            render({
+              tone: r.status==="granted"?"success":r.status==="unavailable"?"warning":"info",
+              text: r.status==="granted" ? `${r.message} Total: ${r.totalCredits} credits.` : r.message
+            });
+          }
         },
         rewardManager.getResultPanel(result, rewardClaimed),
-        message
+        allDone && !result.nextLevelId
+          ? { tone:"success", text:"All 8 payloads recovered. The Eidolon Charter is exposed. Helix Ark can't rewrite the city now." }
+          : notice
       );
     };
 

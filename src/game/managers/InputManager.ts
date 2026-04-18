@@ -7,237 +7,127 @@ export class InputManager {
   private readonly controlsRoot: HTMLElement;
   private touchVisible = false;
   private touchPointerId: number | null = null;
-  private touchOrigin = new Phaser.Math.Vector2();
-  private touchVector = new Phaser.Math.Vector2();
-  private interactQueued = false;
-  private echoQueued = false;
-  private pauseQueued = false;
-  private restartQueued = false;
+  private touchOrigin   = new Phaser.Math.Vector2();
+  private touchVector   = new Phaser.Math.Vector2();
+  private interactQ  = false;
+  private echoQ      = false;
+  private pauseQ     = false;
+  private restartQ   = false;
   private stealthHeld = false;
-  private pointerMoveHandler?: (event: PointerEvent) => void;
-  private pointerUpHandler?: (event: PointerEvent) => void;
+  private ptrMove?: (e: PointerEvent) => void;
+  private ptrUp?:   (e: PointerEvent) => void;
 
-  constructor(private readonly scene: Phaser.Scene, settings: SettingsData) {
-    const keyboard = this.scene.input.keyboard;
-    if (!keyboard) {
-      throw new Error("Keyboard input is required.");
-    }
-
-    this.keys = keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,SPACE,E,ENTER,Q,ESC,R") as Record<
-      string,
-      Phaser.Input.Keyboard.Key
-    >;
-
+  constructor(scene: Phaser.Scene, settings: SettingsData) {
+    const kb = scene.input.keyboard;
+    if (!kb) throw new Error("Keyboard unavailable.");
+    this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,SPACE,E,ENTER,Q,ESC,R") as Record<string, Phaser.Input.Keyboard.Key>;
     const root = document.getElementById("ui-controls-layer");
-    if (!root) {
-      throw new Error("Touch controls root not found.");
-    }
+    if (!root) throw new Error("Controls root missing.");
     this.controlsRoot = root;
-    this.setTouchVisibility(this.shouldUseTouch(settings));
+    this.setTouch(this.wantsTouch(settings));
   }
 
   getMovement(): Phaser.Math.Vector2 {
-    const vector = new Phaser.Math.Vector2(0, 0);
-    if (this.keys.A.isDown || this.keys.LEFT.isDown) {
-      vector.x -= 1;
-    }
-    if (this.keys.D.isDown || this.keys.RIGHT.isDown) {
-      vector.x += 1;
-    }
-    if (this.keys.W.isDown || this.keys.UP.isDown) {
-      vector.y -= 1;
-    }
-    if (this.keys.S.isDown || this.keys.DOWN.isDown) {
-      vector.y += 1;
-    }
-
-    if (vector.lengthSq() > 0) {
-      vector.normalize();
-    }
-
-    if (this.touchVector.lengthSq() > 0) {
-      return this.touchVector.clone();
-    }
-
-    return vector;
+    const v = new Phaser.Math.Vector2();
+    if (this.keys.A!.isDown || this.keys.LEFT!.isDown)  v.x -= 1;
+    if (this.keys.D!.isDown || this.keys.RIGHT!.isDown) v.x += 1;
+    if (this.keys.W!.isDown || this.keys.UP!.isDown)    v.y -= 1;
+    if (this.keys.S!.isDown || this.keys.DOWN!.isDown)  v.y += 1;
+    if (v.lengthSq() > 0) v.normalize();
+    return this.touchVector.lengthSq() > 0 ? this.touchVector.clone() : v;
   }
 
   consumeInteract(): boolean {
-    const pressed =
-      Phaser.Input.Keyboard.JustDown(this.keys.E) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.SPACE) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.ENTER) ||
-      this.interactQueued;
-
-    this.interactQueued = false;
-    return pressed;
+    const p = Phaser.Input.Keyboard.JustDown(this.keys.E!) || Phaser.Input.Keyboard.JustDown(this.keys.SPACE!) || Phaser.Input.Keyboard.JustDown(this.keys.ENTER!) || this.interactQ;
+    this.interactQ = false; return p;
   }
+  consumeEcho():    boolean { const p = Phaser.Input.Keyboard.JustDown(this.keys.Q!)   || this.echoQ;    this.echoQ    = false; return p; }
+  consumePause():   boolean { const p = Phaser.Input.Keyboard.JustDown(this.keys.ESC!) || this.pauseQ;   this.pauseQ   = false; return p; }
+  consumeRestart(): boolean { const p = Phaser.Input.Keyboard.JustDown(this.keys.R!)   || this.restartQ; this.restartQ = false; return p; }
+  isStealthHeld():  boolean { return this.keys.SHIFT!.isDown || this.stealthHeld; }
 
-  consumeEcho(): boolean {
-    const pressed = Phaser.Input.Keyboard.JustDown(this.keys.Q) || this.echoQueued;
-    this.echoQueued = false;
-    return pressed;
-  }
-
-  consumePause(): boolean {
-    const pressed = Phaser.Input.Keyboard.JustDown(this.keys.ESC) || this.pauseQueued;
-    this.pauseQueued = false;
-    return pressed;
-  }
-
-  consumeRestart(): boolean {
-    const pressed = Phaser.Input.Keyboard.JustDown(this.keys.R) || this.restartQueued;
-    this.restartQueued = false;
-    return pressed;
-  }
-
-  isStealthHeld(): boolean {
-    return this.keys.SHIFT.isDown || this.stealthHeld;
-  }
-
-  updateSettings(settings: SettingsData): void {
-    this.setTouchVisibility(this.shouldUseTouch(settings));
-  }
+  updateSettings(s: SettingsData): void { this.setTouch(this.wantsTouch(s)); }
 
   destroy(): void {
     this.controlsRoot.innerHTML = "";
-    if (this.pointerMoveHandler) {
-      window.removeEventListener("pointermove", this.pointerMoveHandler);
-    }
-    if (this.pointerUpHandler) {
-      window.removeEventListener("pointerup", this.pointerUpHandler);
-      window.removeEventListener("pointercancel", this.pointerUpHandler);
-    }
+    if (this.ptrMove) window.removeEventListener("pointermove",   this.ptrMove);
+    if (this.ptrUp)   { window.removeEventListener("pointerup",     this.ptrUp); window.removeEventListener("pointercancel", this.ptrUp); }
   }
 
-  private shouldUseTouch(settings: SettingsData): boolean {
-    if (settings.touchControls === "on") {
-      return true;
-    }
-    if (settings.touchControls === "off") {
-      return false;
-    }
+  private wantsTouch(s: SettingsData): boolean {
+    if (s.touchControls === "on")  return true;
+    if (s.touchControls === "off") return false;
     return window.matchMedia("(pointer: coarse)").matches;
   }
 
-  private setTouchVisibility(visible: boolean): void {
-    if (visible === this.touchVisible) {
-      return;
-    }
-
+  private setTouch(visible: boolean): void {
+    if (visible === this.touchVisible) return;
     this.touchVisible = visible;
     this.controlsRoot.innerHTML = "";
-    this.touchVector.set(0, 0);
-    this.touchPointerId = null;
+    this.touchVector.set(0,0); this.touchPointerId = null;
+    if (!visible) return;
 
-    if (!visible) {
-      return;
-    }
-
-    const shell = document.createElement("div");
-    shell.className = "touch-shell";
-
-    const joystick = document.createElement("div");
-    joystick.className = "touch-joystick";
-    const knob = document.createElement("div");
-    knob.className = "touch-joystick-knob";
+    const shell    = mk("div", "touch-shell");
+    const joystick = mk("div", "touch-joystick");
+    const knob     = mk("div", "touch-joystick-knob");
     joystick.appendChild(knob);
 
-    const actions = document.createElement("div");
-    actions.className = "touch-actions";
+    const actions = mk("div", "touch-actions");
     actions.append(
-      this.makeButton("Hack", "primary", () => {
-        this.interactQueued = true;
-      }),
-      this.makeButton("Echo", "secondary", () => {
-        this.echoQueued = true;
-      }),
-      this.makeButton("Stealth", "", () => undefined, true),
-      this.makeButton("Pause", "", () => {
-        this.pauseQueued = true;
-      })
+      this.mkBtn("Hack",   "primary",   () => { this.interactQ = true; }),
+      this.mkBtn("Echo",   "secondary", () => { this.echoQ     = true; }),
+      this.mkBtn("Stealth","",          () => undefined, true),
+      this.mkBtn("Pause",  "",          () => { this.pauseQ    = true; })
     );
 
-    const stealthButton = actions.children[2] as HTMLButtonElement;
-    stealthButton.addEventListener("pointerdown", () => {
-      this.stealthHeld = true;
-    });
-    const releaseStealth = () => {
-      this.stealthHeld = false;
-    };
-    stealthButton.addEventListener("pointerup", releaseStealth);
-    stealthButton.addEventListener("pointercancel", releaseStealth);
-    stealthButton.addEventListener("pointerleave", releaseStealth);
+    const stealthBtn = actions.children[2] as HTMLButtonElement;
+    stealthBtn.addEventListener("pointerdown",  () => { this.stealthHeld = true; });
+    const releaseS = () => { this.stealthHeld = false; };
+    stealthBtn.addEventListener("pointerup",     releaseS);
+    stealthBtn.addEventListener("pointercancel", releaseS);
+    stealthBtn.addEventListener("pointerleave",  releaseS);
 
-    joystick.addEventListener("pointerdown", (event) => {
-      this.touchPointerId = event.pointerId;
-      this.touchOrigin.set(event.clientX, event.clientY);
-      this.touchVector.set(0, 0);
-      joystick.setPointerCapture(event.pointerId);
+    joystick.addEventListener("pointerdown", e => {
+      this.touchPointerId = e.pointerId;
+      this.touchOrigin.set(e.clientX, e.clientY);
+      this.touchVector.set(0,0);
+      joystick.setPointerCapture(e.pointerId);
     });
 
-    this.pointerMoveHandler = (event: PointerEvent) => {
-      if (event.pointerId !== this.touchPointerId) {
-        return;
-      }
-
-      const dx = event.clientX - this.touchOrigin.x;
-      const dy = event.clientY - this.touchOrigin.y;
-      const vector = new Phaser.Math.Vector2(dx, dy);
-      const length = Math.min(vector.length(), TOUCH_JOYSTICK_RADIUS);
-      if (length < TOUCH_DEAD_ZONE) {
-        this.touchVector.set(0, 0);
-        knob.style.transform = "translate(0px, 0px)";
-        return;
-      }
-
-      vector.normalize().scale(length);
-      knob.style.transform = `translate(${vector.x}px, ${vector.y}px)`;
-      this.touchVector.set(vector.x / TOUCH_JOYSTICK_RADIUS, vector.y / TOUCH_JOYSTICK_RADIUS);
-      if (this.touchVector.lengthSq() > 1) {
-        this.touchVector.normalize();
-      }
+    this.ptrMove = (e: PointerEvent) => {
+      if (e.pointerId !== this.touchPointerId) return;
+      const dx = e.clientX - this.touchOrigin.x, dy = e.clientY - this.touchOrigin.y;
+      const v  = new Phaser.Math.Vector2(dx, dy);
+      const len = Math.min(v.length(), TOUCH_JOYSTICK_RADIUS);
+      if (len < TOUCH_DEAD_ZONE) { this.touchVector.set(0,0); knob.style.transform = ""; return; }
+      v.normalize().scale(len);
+      knob.style.transform = `translate(${v.x}px,${v.y}px)`;
+      this.touchVector.set(v.x / TOUCH_JOYSTICK_RADIUS, v.y / TOUCH_JOYSTICK_RADIUS);
+      if (this.touchVector.lengthSq() > 1) this.touchVector.normalize();
     };
-
-    this.pointerUpHandler = (event: PointerEvent) => {
-      if (event.pointerId !== this.touchPointerId) {
-        return;
-      }
-      this.touchPointerId = null;
-      this.touchVector.set(0, 0);
-      knob.style.transform = "translate(0px, 0px)";
+    this.ptrUp = (e: PointerEvent) => {
+      if (e.pointerId !== this.touchPointerId) return;
+      this.touchPointerId = null; this.touchVector.set(0,0);
+      knob.style.transform = "";
     };
-
-    window.addEventListener("pointermove", this.pointerMoveHandler);
-    window.addEventListener("pointerup", this.pointerUpHandler);
-    window.addEventListener("pointercancel", this.pointerUpHandler);
+    window.addEventListener("pointermove",   this.ptrMove);
+    window.addEventListener("pointerup",     this.ptrUp);
+    window.addEventListener("pointercancel", this.ptrUp);
 
     shell.append(joystick, actions);
     this.controlsRoot.appendChild(shell);
   }
 
-  private makeButton(
-    label: string,
-    tone: string,
-    onPress: () => void,
-    hold = false
-  ): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `touch-button ${tone}`.trim();
-    button.textContent = label;
-    const handler = () => onPress();
-    button.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      handler();
-    });
-
-    if (!hold) {
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-      });
-    }
-
-    return button;
+  private mkBtn(label: string, tone: string, onPress: () => void, hold = false): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = `touch-button ${tone}`.trim(); b.textContent = label;
+    b.addEventListener("pointerdown", e => { e.preventDefault(); onPress(); });
+    if (!hold) b.addEventListener("click", e => e.preventDefault());
+    return b;
   }
+}
+
+function mk(tag: string, cls: string): HTMLDivElement {
+  const e = document.createElement(tag) as HTMLDivElement;
+  e.className = cls; return e;
 }

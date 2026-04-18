@@ -1,130 +1,96 @@
 # ECHO HEIST
 
-ECHO HEIST is a short-form stealth heist game built for the browser.
+A short-form stealth game built for the browser.
 
-You break into compact cyber-facility rooms, read patrol patterns, crack open a route, steal live memory payloads before Helix Ark can erase them, and get out before the place seals behind you. The signature mechanic is the Time Echo: every few seconds your recent movement becomes a holographic clone that can replay your route, trigger systems, and buy you the opening you need.
+You break into compact cyber-facility rooms, read the patrol patterns, crack a route, steal live memory payloads before Helix Ark erases them, and get out before the floor seals. The signature mechanic is the **Time Echo**: your recent movement replays as a holographic clone that can hold relay plates, trigger systems, and draw guard attention away from your real path.
 
-The whole game is built around quick retries and clean execution. A good run should feel sharp, deliberate, and a little bit sneaky-smart.
+The whole game is built around quick retries and clean execution. A good run feels deliberate and a little bit sneaky-smart.
 
-## What's in the project
+---
+
+## Stack
 
 - Phaser 3 + TypeScript + Vite
-- desktop and mobile browser support
-- keyboard and touch controls
-- local save data with `localStorage`
-- runtime-generated art, no paid assets required
-- synth-style audio generated in code
-- level-based structure with replayable score chasing
-- a light narrative frame about recovering proof before the city archive is rewritten
-- optional rewarded-ad hooks that work in demo mode now and can switch to a live web ad unit later
+- Desktop and mobile browser support
+- Keyboard and touch controls
+- Local save data via `localStorage`
+- Runtime-generated art — no paid assets
+- Web Audio synth — no audio files to download
+- Optional rewarded-ad hooks (demo mode by default)
 
-## Core idea
+---
 
-This is not an endless survival game and it is not a shooter wearing neon paint.
-
-The fun comes from planning a route, printing a useful echo, creating a temporary breach, and turning a dangerous room into a solvable timing problem. The player is strongest when they think one step ahead, and each stolen payload should feel like it matters.
-
-## Running it locally
-
-You need Node.js installed first.
+## Running locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite will print a local address in the terminal. Open that address in your browser to play.
+Open the address Vite prints in your terminal.
 
-## Production build
+---
+
+## Controls
+
+| Action | Keyboard | Mobile |
+|--------|----------|--------|
+| Move | WASD / Arrows | Left joystick |
+| Interact / Hack | E, Space, Enter | Hack button |
+| Deploy Echo | Q | Echo button |
+| Stealth walk | Shift (hold) | Stealth button (hold) |
+| Pause | Esc | Pause button |
+| Restart room | R | — |
+
+---
+
+## Build for production
 
 ```bash
 npm run build
 ```
 
-The final web build is written to `dist/`.
+Output goes to `dist/`. Static — works on Vercel, Netlify, or GitHub Pages.
 
-If you want to sanity-check the production build locally:
+---
+
+## Rewarded ads
+
+The project ships in **demo mode** by default. The reward buttons work, the credit flow works, but no real ad is shown and no revenue is earned. Good for testing.
+
+### Enabling live Google rewarded ads (Vercel)
+
+1. Get a Google Ad Manager account and create a **rewarded out-of-page ad unit**.
+2. In Vercel → your project → **Settings → Environment Variables**, add:
+   - `VITE_REWARDED_AD_PROVIDER` = `google-gpt`
+   - `VITE_GAM_REWARDED_AD_UNIT_PATH` = `/your-network-code/your-unit-name`
+3. Set both variables for **Production** (keep `demo` in Preview if you want).
+4. Redeploy.
+
+That's it. The code already handles the Google Publisher Tag flow.
+
+### Where credits appear
+
+- **Main menu sponsor cache** — cooldown-limited, available before any run
+- **Results screen boost** — one optional post-run bonus per clear
+
+Both are optional. The room itself never has an ad wall.
+
+---
+
+## Validate levels
 
 ```bash
-npm run preview
+npm run validate:levels
 ```
 
-## Controls
+Checks that every room is traversable, no guard patrols clip through walls, and no level can be skipped without using the echo mechanic.
 
-### Desktop
+---
 
-- `WASD` or arrow keys: move
-- `Shift`: stealth walk
-- `E`, `Space`, or `Enter`: interact
-- `Q`: deploy Time Echo
-- `Esc`: pause
-- `R`: restart room
+## Project layout
 
-### Mobile
-
-- left joystick: move
-- `Hack`: interact
-- `Echo`: deploy Time Echo
-- `Stealth`: hold for quiet movement
-- `Pause`: open the pause menu
-
-## Hosting
-
-This project is static after build, so it works well on free hosts.
-
-### Vercel
-
-1. Push the repo to GitHub.
-2. Import the repo into Vercel.
-3. Use:
-   - Install command: `npm install`
-   - Build command: `npm run build`
-   - Output directory: `dist`
-
-### Rewarded ads on Vercel
-
-The project now ships with two reward modes:
-
-- `demo` mode: works immediately and simulates a rewarded break so you can test the economy with zero setup
-- `google-gpt` mode: swaps the demo flow for a real Google Publisher Tag rewarded ad slot once you have a rewarded ad unit
-
-#### Zero-cost first launch
-
-If you do nothing, the build stays in `demo` mode. That means the reward buttons work, the credits logic works, and the UI flow is testable, but you are not earning ad revenue yet.
-
-#### Switching to a live rewarded ad later
-
-1. Create or get access to a Google Ad Manager account and a rewarded ad unit path.
-2. In Vercel, open your project.
-3. Go to `Settings` -> `Environment Variables`.
-4. Add:
-   - `VITE_REWARDED_AD_PROVIDER=google-gpt`
-   - `VITE_GAM_REWARDED_AD_UNIT_PATH=/your-network-code/your-rewarded-unit`
-5. Save the variables for `Production` and `Preview`.
-6. Redeploy the project.
-
-You can also keep `VITE_REWARDED_AD_PROVIDER=demo` in preview builds while only enabling the live ad unit in production.
-
-#### Current reward loops
-
-- Main menu sponsor cache: cooldown-limited bonus credits before a run
-- Results screen sponsor boost: one optional post-run bonus payout per clear
-
-These are optional by design so the room itself stays clean and the monetization does not feel like a paywall.
-
-### Netlify
-
-1. Run `npm run build`
-2. Upload the `dist` folder, or connect the GitHub repo
-3. Set the publish directory to `dist`
-
-### GitHub Pages
-
-Use the built `dist` output with a Pages workflow or another static publish flow.
-
-## Project structure
-
-```text
+```
 src/
   main.ts
   style.css
@@ -132,53 +98,26 @@ src/
     config.ts
     constants.ts
     types.ts
-    data/
-      levels.ts
-      cosmetics.ts
-      settings.ts
-    managers/
-      AudioManager.ts
-      InputManager.ts
-      LevelManager.ts
-      SaveManager.ts
-      UIManager.ts
-    scenes/
-      BootScene.ts
-      PreloadScene.ts
-      MainMenuScene.ts
-      LevelSelectScene.ts
-      TutorialScene.ts
-      GameScene.ts
-      PauseScene.ts
-      ResultsScene.ts
-      SettingsScene.ts
-    utils/
+    data/         levels, cosmetics, settings
+    managers/     Audio, Input, Level, RewardedAd, Save, UI
+    scenes/       Boot, Preload, MainMenu, LevelSelect, Tutorial,
+                  Game, Pause, Results, Settings
+    utils/        services
+scripts/
+  validate-levels.mjs
 ```
 
-## Design notes
+---
 
-- Levels are data-driven so it stays easy to add or rebalance rooms.
-- The HUD lives in the DOM to keep text crisp and responsive across phone, tablet, and desktop.
-- The world art is generated at runtime to keep the project light and portable.
-- Audio uses Web Audio synth tones instead of a downloaded asset pack.
-- Save data stores progress, best ranks, credits, and settings in the browser.
-- `npm run validate:levels` checks that authored breach rooms are actually traversable and that the tutorial cannot be bypassed before opening the relay.
+## What each room teaches
 
-## A good next step if you keep expanding it
-
-- deeper guard suspicion and search behavior
-- bespoke set-piece heist rooms
-- more cosmetic unlocks
-- daily challenge rooms
-- better post-run mastery stats
-
-## Scripts
-
-- `npm run dev` - start the Vite dev server
-- `npm run build` - type-check and build production files
-- `npm run preview` - preview the built site locally
-- `npm run validate:levels` - validate the authored room flow
-
-## License / usage
-
-This project currently ships as a self-contained indie web game prototype/codebase. Add your own license if you plan to publish or open-source it publicly.
+| Room | New mechanic |
+|------|-------------|
+| Tutorial | Echo + relay plate basics |
+| 01 Silent Switch | Switch timing, noise as a tool |
+| 02 Ghost Relay | Echo holds door while you hack |
+| 03 Optic Bloom | Camera blind-spot timing |
+| 04 Crossfade | Split-tasking two channels at once |
+| 05 Parallax Vault | Multi-step setup (lights → terminal → vault) |
+| 06 Redline Garden | Two guards, staggered lasers |
+| 07 Grand Theft Echo | Everything combined, final payload |
