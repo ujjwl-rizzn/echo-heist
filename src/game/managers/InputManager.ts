@@ -50,8 +50,7 @@ export class InputManager {
 
   destroy(): void {
     this.controlsRoot.innerHTML = "";
-    if (this.ptrMove) window.removeEventListener("pointermove",   this.ptrMove);
-    if (this.ptrUp)   { window.removeEventListener("pointerup",     this.ptrUp); window.removeEventListener("pointercancel", this.ptrUp); }
+    this.detachTouchListeners();
   }
 
   private wantsTouch(s: SettingsData): boolean {
@@ -64,7 +63,10 @@ export class InputManager {
     if (visible === this.touchVisible) return;
     this.touchVisible = visible;
     this.controlsRoot.innerHTML = "";
-    this.touchVector.set(0,0); this.touchPointerId = null;
+    this.detachTouchListeners();
+    this.touchVector.set(0,0);
+    this.touchPointerId = null;
+    this.stealthHeld = false;
     if (!visible) return;
 
     const shell    = mk("div", "touch-shell");
@@ -116,6 +118,18 @@ export class InputManager {
 
     shell.append(joystick, actions);
     this.controlsRoot.appendChild(shell);
+  }
+
+  private detachTouchListeners(): void {
+    if (this.ptrMove) {
+      window.removeEventListener("pointermove", this.ptrMove);
+      this.ptrMove = undefined;
+    }
+    if (this.ptrUp) {
+      window.removeEventListener("pointerup", this.ptrUp);
+      window.removeEventListener("pointercancel", this.ptrUp);
+      this.ptrUp = undefined;
+    }
   }
 
   private mkBtn(label: string, tone: string, onPress: () => void, hold = false): HTMLButtonElement {

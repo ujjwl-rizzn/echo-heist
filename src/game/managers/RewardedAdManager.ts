@@ -52,16 +52,30 @@ class GptProvider implements Provider {
           const pa = gt.pubads?.();
           if (!pa)  { resolve({ status:"error", message:"Ad service could not start.", providerLabel:this.label }); return; }
           let granted = false, settled = false;
-          const done = (r: FlowResult) => { if (settled) return; settled=true; typeof gt.destroySlots==="function" && gt.destroySlots([slot]); resolve(r); };
-          pa.addEventListener("rewardedSlotReady", (e: unknown) => {
+          const cleanup = () => {
+            if (typeof pa.removeEventListener === "function") {
+              pa.removeEventListener("rewardedSlotReady", onReady);
+              pa.removeEventListener("rewardedSlotGranted", onGranted);
+              pa.removeEventListener("rewardedSlotClosed", onClosed);
+            }
+            if (timer) window.clearTimeout(timer);
+            if (typeof gt.destroySlots==="function") gt.destroySlots([slot]);
+          };
+          const done = (r: FlowResult) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(r);
+          };
+          const onReady = (e: unknown) => {
             const event = e as { slot?: unknown; makeRewardedVisible?: () => void };
             if (event.slot === slot) event.makeRewardedVisible?.();
-          });
-          pa.addEventListener("rewardedSlotGranted", (e: unknown) => {
+          };
+          const onGranted = (e: unknown) => {
             const event = e as { slot?: unknown };
             if (event.slot === slot) granted = true;
-          });
-          pa.addEventListener("rewardedSlotClosed", (e: unknown) => {
+          };
+          const onClosed = (e: unknown) => {
             const event = e as { slot?: unknown };
             if (event.slot !== slot) return;
             done(
@@ -69,7 +83,13 @@ class GptProvider implements Provider {
                 ? { status:"granted",message:"Reward granted.",providerLabel:this.label }
                 : { status:"cancelled",message:"Ad closed early.",providerLabel:this.label }
             );
-          });
+          };
+          const timer = window.setTimeout(() => {
+            done({ status:"unavailable", message:"Rewarded ad timed out.", providerLabel:this.label });
+          }, 15000);
+          pa.addEventListener("rewardedSlotReady", onReady);
+          pa.addEventListener("rewardedSlotGranted", onGranted);
+          pa.addEventListener("rewardedSlotClosed", onClosed);
           slot.addService(pa);
           if (!this.servicesEnabled && typeof gt.enableServices==="function") { gt.enableServices(); this.servicesEnabled=true; }
           if (typeof gt.display==="function") gt.display(slot);
@@ -81,15 +101,23 @@ class GptProvider implements Provider {
 
   private ensureScript(): Promise<void> {
     if (this.scriptP) return this.scriptP;
-    this.scriptP = new Promise((res, rej) => {
+    this.scriptP = new Promise<void>((res, rej) => {
       const ex = document.querySelector<HTMLScriptElement>('script[data-ehgpt]');
-      if (ex) { ex.dataset.loaded==="true" ? res() : ex.addEventListener("load",()=>res(),{once:true}); return; }
+      if (ex) {
+        if (ex.dataset.loaded === "true") { res(); return; }
+        ex.addEventListener("load",  () => res(), { once:true });
+        ex.addEventListener("error", () => rej(new Error("GPT load failed.")), { once:true });
+        return;
+      }
       window.googletag = window.googletag ?? { cmd:[] };
       const s = document.createElement("script");
       s.async = true; s.src = "https://securepubads.g.doubleclick.net/tag/js/gpt.js"; s.dataset.ehgpt = "true";
       s.addEventListener("load",  () => { s.dataset.loaded="true"; res(); }, { once:true });
       s.addEventListener("error", () => rej(new Error("GPT load failed.")),   { once:true });
       document.head.appendChild(s);
+    }).catch(error => {
+      this.scriptP = null;
+      throw error;
     });
     return this.scriptP;
   }

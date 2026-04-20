@@ -135,6 +135,8 @@ export class GameScene extends Phaser.Scene {
   private state:           "active"|"compromised"|"complete" = "active";
   private stateMs =        0;
   private bannerTimer =    0;
+  private hudReady =       false;
+  private resumeHandler?:  () => void;
 
   constructor() { super(SCENE_KEYS.GAME); }
 
@@ -183,6 +185,7 @@ export class GameScene extends Phaser.Scene {
     this.alarmMusicMs    = 0;
     this.pendingInteract = false;
     this.ambLines        = [];
+    this.hudReady        = false;
 
     /* Phaser camera setup — use this.cameras.main (Phaser built-in) */
     this.cameras.main.setBounds(0,0,this.level.world.width,this.level.world.height);
@@ -196,15 +199,23 @@ export class GameScene extends Phaser.Scene {
     this.refreshHud();
 
     /* resume after pause */
-    this.events.on(Phaser.Scenes.Events.RESUME, () => {
+    if (this.resumeHandler) {
+      this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
+    }
+    this.resumeHandler = () => {
       const s = saveManager.getSettings();
       audioManager.applySettings(s);
       uiManager.applySettings(s);
       this.inputMgr.updateSettings(s);
       audioManager.setMusicMode("stealth");
-    });
+    };
+    this.events.on(Phaser.Scenes.Events.RESUME, this.resumeHandler);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (this.resumeHandler) {
+        this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
+        this.resumeHandler = undefined;
+      }
       this.inputMgr.destroy();
       uiManager.clearHud();
       this.killEcho();
@@ -986,11 +997,16 @@ export class GameScene extends Phaser.Scene {
       credits:this.credits, interactionHint:this.hint,
       breachLabel:this.breachLabel(), traceLabel:this.exposureLevel>0?`${this.exposureSrc||"TRACE"} ${Math.round(this.exposureLevel*100)}%`:""
     };
-    uiManager.renderHud(hud,()=>{
-      audioManager.playUi();
-      this.scene.launch(SCENE_KEYS.PAUSE,{levelId:this.level.id});
-      this.scene.pause();
-    });
+    if (!this.hudReady) {
+      uiManager.renderHud(hud,()=>{
+        audioManager.playUi();
+        this.scene.launch(SCENE_KEYS.PAUSE,{levelId:this.level.id});
+        this.scene.pause();
+      });
+      this.hudReady = true;
+      return;
+    }
+    uiManager.updateHud(hud);
   }
 
   private breachLabel(): string {

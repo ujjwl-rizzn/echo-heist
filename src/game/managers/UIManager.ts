@@ -161,15 +161,35 @@ export class UIManager {
     const alerts = this.hudRoot.querySelector<HTMLElement>(".hud-stat-pill:first-child strong");
     const creds  = this.hudRoot.querySelector<HTMLElement>(".hud-stat-pill:last-child strong");
     const fill   = this.hudRoot.querySelector<HTMLElement>(".hud-meter-fill");
-    const breach = this.hudRoot.querySelector<HTMLElement>(".hud-breach");
-    const trace  = this.hudRoot.querySelector<HTMLElement>(".hud-trace");
+    const mission = this.hudRoot.querySelector<HTMLElement>(".hud-chip--mission");
+    const status  = this.hudRoot.querySelector<HTMLElement>(".hud-chip--status");
+    let breach = this.hudRoot.querySelector<HTMLElement>(".hud-breach");
+    let trace  = this.hudRoot.querySelector<HTMLElement>(".hud-trace");
     if (obj)    obj.textContent    = state.objective;
     if (time)   time.textContent   = state.timeLabel;
     if (alerts) alerts.textContent = String(state.detections);
     if (creds)  creds.textContent  = String(state.credits);
     if (fill)   fill.style.width   = `${Math.round(state.echoCharge*100)}%`;
-    if (breach) { breach.textContent = state.breachLabel; breach.style.display = state.breachLabel ? "" : "none"; }
-    if (trace)  { trace.textContent  = state.traceLabel;  trace.style.display  = state.traceLabel  ? "" : "none"; }
+
+    if (state.traceLabel) {
+      if (!trace && mission) {
+        trace = el("div", "hud-trace");
+        mission.appendChild(trace);
+      }
+      if (trace) trace.textContent = state.traceLabel;
+    } else {
+      trace?.remove();
+    }
+
+    if (state.breachLabel) {
+      if (!breach && status) {
+        breach = el("div", "hud-breach");
+        status.appendChild(breach);
+      }
+      if (breach) breach.textContent = state.breachLabel;
+    } else {
+      breach?.remove();
+    }
   }
 
   showPause(handlers: PauseHandlers): void {
