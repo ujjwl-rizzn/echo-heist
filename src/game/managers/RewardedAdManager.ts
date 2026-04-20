@@ -143,9 +143,9 @@ export class RewardedAdManager {
     const avail   = !meta.lastSponsorDropAt || now >= readyAt;
     return {
       eyebrow: "Sponsor Relay",
-      title:   avail ? "Claim sponsor cache" : "Cache cooling down",
+      title:   avail ? "Jack into sponsor cache" : "Cache cooling down",
       copy:    avail
-        ? "Watch a short sponsor break before your next run and take a credit injection."
+        ? "Tap or click the reward ad, crack the sponsor relay, and walk away with a fresh credit stash before the next run."
         : "Sponsor relay is on cooldown to prevent unlimited free farming.",
       buttonLabel: avail ? this.ctaLabel("menu-drop") : `Ready in ${fmtDuration(readyAt - now)}`,
       note:    this.providerNote(avail),
@@ -156,7 +156,12 @@ export class RewardedAdManager {
   async claimMainMenuDrop(): Promise<RewardClaimResult> {
     const panel = this.getMainMenuPanel();
     if (panel.disabled) return { status:"unavailable", creditsGranted:0, totalCredits:this.save.getData().totalCredits, message:this.mode==="off"?"Rewarded ads are off.":"Cache still cooling down.", providerLabel:this.provider.label };
-    const flow = await this.provider.present({ placement:"menu-drop", title:"Sponsor cache uplink", copy:"Watch a short break to add credits to your bankroll before the next run.", credits:SPONSOR_CACHE_CREDITS });
+    const flow = await this.provider.present({
+      placement:"menu-drop",
+      title:"Sponsor cache uplink",
+      copy:"Tap or click the reward ad, hold the line for a moment, and pull bonus credits into your bankroll before the next run.",
+      credits:SPONSOR_CACHE_CREDITS
+    });
     if (flow.status !== "granted") return { status:flow.status, creditsGranted:0, totalCredits:this.save.getData().totalCredits, message:flow.message, providerLabel:flow.providerLabel };
     const total = this.save.grantRewardedCredits(SPONSOR_CACHE_CREDITS, "menu-drop");
     return { status:"granted", creditsGranted:SPONSOR_CACHE_CREDITS, totalCredits:total, message:`+${SPONSOR_CACHE_CREDITS} credits added.`, providerLabel:flow.providerLabel };
@@ -167,7 +172,7 @@ export class RewardedAdManager {
     return {
       eyebrow: "Optional reward",
       title:   claimed ? "Boost already collected" : `Boost this extraction`,
-      copy:    claimed ? "This run already paid out its bonus." : "Watch one optional break after the run to boost your payout.",
+      copy:    claimed ? "This run already paid out its bonus." : "Tap or click the reward ad after the run to push this extraction payout even higher.",
       buttonLabel: claimed ? "Collected" : `${this.ctaLabel("result-boost")} +${credits}`,
       note:    claimed ? "Next room ready whenever you are." : this.providerNote(true),
       disabled: claimed || this.mode === "off"
@@ -176,7 +181,12 @@ export class RewardedAdManager {
 
   async claimResultBoost(result: LevelResult): Promise<RewardClaimResult> {
     const credits = this.boostCredits(result);
-    const flow    = await this.provider.present({ placement:"result-boost", title:"Post-run sponsor break", copy:`Watch a short clip to boost your payout for recovering ${result.payloadName}.`, credits });
+    const flow = await this.provider.present({
+      placement:"result-boost",
+      title:"Post-run sponsor break",
+      copy:`Tap or click the reward ad to boost the payout for recovering ${result.payloadName}.`,
+      credits
+    });
     if (flow.status !== "granted") return { status:flow.status, creditsGranted:0, totalCredits:this.save.getData().totalCredits, message:flow.message, providerLabel:flow.providerLabel };
     const total = this.save.grantRewardedCredits(credits, "result-boost");
     return { status:"granted", creditsGranted:credits, totalCredits:total, message:`+${credits} credits from post-run boost.`, providerLabel:flow.providerLabel };
@@ -185,14 +195,14 @@ export class RewardedAdManager {
   private boostCredits(r: LevelResult): number { return Math.max(140, Math.round(r.credits * 1.5 + 90)); }
 
   private ctaLabel(p: Placement): string {
-    if (this.mode === "google-gpt") return p==="menu-drop" ? "Watch ad" : "Watch bonus ad";
-    if (this.mode === "demo")       return p==="menu-drop" ? "Preview sponsor clip" : "Preview reward clip";
+    if (this.mode === "google-gpt") return p==="menu-drop" ? "Tap / Click Ad • Claim Cache" : "Tap / Click Ad • Boost Haul";
+    if (this.mode === "demo")       return p==="menu-drop" ? "Preview Reward Drop" : "Preview Boost Drop";
     return "Ads disabled";
   }
 
   private providerNote(avail: boolean): string {
-    if (this.mode === "google-gpt") return avail ? "Live rewarded ad — optional, never a paywall." : "Cooldown keeps it from feeling like grinding.";
-    if (this.mode === "demo")       return avail ? "Demo mode active. Connect a live ad unit on Vercel to earn real revenue." : "Demo cooldown applies even in test mode.";
+    if (this.mode === "google-gpt") return avail ? "Optional live reward drop. Tap in, claim the stash, keep moving." : "Cooldown keeps the reward loop from turning into grind.";
+    if (this.mode === "demo")       return avail ? "Demo reward flow active. Connect a live ad unit on Vercel to turn this into real revenue." : "Demo cooldown applies even in test mode.";
     return "Ad system is off in this build.";
   }
 

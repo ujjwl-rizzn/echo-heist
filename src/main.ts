@@ -1,6 +1,4 @@
-import Phaser from "phaser";
 import "./style.css";
-import { createGameConfig } from "./game/config";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("App root not found.");
@@ -15,5 +13,4 @@ app.innerHTML = `
     </div>
   </div>`;
 
-const game = new Phaser.Game(createGameConfig("game-root"));
-window.addEventListener("beforeunload", () => game.destroy(true));
+void import("./bootGame").then(({ bootGame }) => bootGame("game-root"));
