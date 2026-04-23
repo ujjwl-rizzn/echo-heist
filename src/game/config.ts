@@ -17,7 +17,7 @@ export const createGameConfig = (parent: string): Phaser.Types.Core.GameConfig =
   height: WORLD.HEIGHT,
   backgroundColor: "#050611",
   scene: [BootScene,PreloadScene,MainMenuScene,LevelSelectScene,TutorialScene,GameScene,PauseScene,ResultsScene,SettingsScene],
-  scale:  { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scale:  { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
   render: { antialias: true, roundPixels: false },
   physics: { default: "arcade", arcade: { debug: false } }
 });

@@ -213,6 +213,7 @@ export class GameScene extends Phaser.Scene {
       this.syncAdaptiveCamera();
     };
     this.events.on(Phaser.Scenes.Events.RESUME, this.resumeHandler);
+    this.scale.on("resize", this.syncAdaptiveCamera, this);
 
     if (this.viewportHandler) {
       window.removeEventListener("resize", this.viewportHandler);
@@ -227,6 +228,7 @@ export class GameScene extends Phaser.Scene {
         this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
         this.resumeHandler = undefined;
       }
+      this.scale.off("resize", this.syncAdaptiveCamera, this);
       if (this.viewportHandler) {
         window.removeEventListener("resize", this.viewportHandler);
         window.visualViewport?.removeEventListener("resize", this.viewportHandler);
@@ -1029,27 +1031,36 @@ export class GameScene extends Phaser.Scene {
     if (!this.player) return;
 
     const cam = this.cameras.main;
-    const viewportWidth = Math.max(1, window.visualViewport?.width ?? window.innerWidth);
-    const viewportHeight = Math.max(1, window.visualViewport?.height ?? window.innerHeight);
+    const viewportWidth = Math.max(1, this.scale.width);
+    const viewportHeight = Math.max(1, this.scale.height);
     const aspect = viewportWidth / viewportHeight;
-    const compactViewport = aspect < 1.45;
+    const fitZoom = Math.min(viewportWidth / this.level.world.width, viewportHeight / this.level.world.height);
 
-    if (!compactViewport) {
+    if (aspect >= 1.18) {
       cam.stopFollow();
-      cam.setZoom(1);
+      cam.setDeadzone(0, 0);
+      cam.setZoom(fitZoom);
       cam.centerOn(this.level.world.width / 2, this.level.world.height / 2);
       return;
     }
 
-    const targetVisibleWidth = aspect < 0.9 ? 640 : 860;
-    const targetVisibleHeight = aspect < 0.9 ? 1100 : 760;
-    const zoomX = cam.width / targetVisibleWidth;
-    const zoomY = cam.height / targetVisibleHeight;
-    const zoom = Phaser.Math.Clamp(Math.max(zoomX, zoomY), 1.15, 2);
+    const portraitViewport = aspect < 0.9;
+    const targetVisibleWidth = portraitViewport ? 720 : 920;
+    const targetVisibleHeight = portraitViewport ? 1040 : 760;
+    const zoomX = viewportWidth / targetVisibleWidth;
+    const zoomY = viewportHeight / targetVisibleHeight;
+    const zoom = Phaser.Math.Clamp(
+      Math.max(zoomX, zoomY, fitZoom),
+      fitZoom,
+      portraitViewport ? 1.9 : 1.45
+    );
 
     cam.setZoom(zoom);
     cam.startFollow(this.player, true, 0.14, 0.14);
-    cam.setDeadzone(Math.round(cam.width * 0.26), Math.round(cam.height * 0.2));
+    cam.setDeadzone(
+      Math.round(Math.min(viewportWidth * 0.3, this.level.world.width * 0.45)),
+      Math.round(Math.min(viewportHeight * 0.24, this.level.world.height * 0.38))
+    );
     cam.centerOn(this.player.x, this.player.y);
   }
 

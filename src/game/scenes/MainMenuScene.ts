@@ -3,6 +3,8 @@ import { SCENE_KEYS } from "../constants";
 import { getServices } from "../utils/services";
 
 export class MainMenuScene extends Phaser.Scene {
+  private backdrop: Phaser.GameObjects.GameObject[] = [];
+
   constructor() { super(SCENE_KEYS.MENU); }
 
   create(): void {
@@ -33,12 +35,18 @@ export class MainMenuScene extends Phaser.Scene {
 
     render();
     this.drawBackdrop();
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => uiManager.clearScreen());
+    this.scale.on("resize", this.drawBackdrop, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off("resize", this.drawBackdrop, this);
+      this.clearBackdrop();
+      uiManager.clearScreen();
+    });
   }
 
   private drawBackdrop(): void {
+    this.clearBackdrop();
     const { width, height } = this.scale;
-    this.add.rectangle(width/2, height/2, width, height, 0x050611, 1).setDepth(-20);
+    this.backdrop.push(this.add.rectangle(width/2, height/2, width, height, 0x050611, 1).setDepth(-20));
     for (let i = 0; i < 16; i++) {
       const line = this.add.rectangle(
         Phaser.Math.Between(0, width), Phaser.Math.Between(0, height),
@@ -46,6 +54,15 @@ export class MainMenuScene extends Phaser.Scene {
         Phaser.Math.RND.pick([0x7ef6ff, 0xff3a88]), 0.14
       ).setAngle(Phaser.Math.Between(-35, 35)).setDepth(-10);
       this.tweens.add({ targets: line, alpha:{from:0.06,to:0.2}, duration:900+i*70, yoyo:true, repeat:-1 });
+      this.backdrop.push(line);
     }
+  }
+
+  private clearBackdrop(): void {
+    this.backdrop.forEach(part => {
+      this.tweens.killTweensOf(part);
+      part.destroy();
+    });
+    this.backdrop = [];
   }
 }
