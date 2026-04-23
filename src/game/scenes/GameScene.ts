@@ -137,6 +137,7 @@ export class GameScene extends Phaser.Scene {
   private bannerTimer =    0;
   private hudReady =       false;
   private resumeHandler?:  () => void;
+  private viewportHandler?: () => void;
 
   constructor() { super(SCENE_KEYS.GAME); }
 
@@ -194,6 +195,7 @@ export class GameScene extends Phaser.Scene {
 
     this.buildBackground();
     this.buildWorld();
+    this.syncAdaptiveCamera();
     this.refreshDoors();
     this.showBanner(`${this.level.name}\n${this.level.brief}`, 5000);
     this.refreshHud();
@@ -208,13 +210,27 @@ export class GameScene extends Phaser.Scene {
       uiManager.applySettings(s);
       this.inputMgr.updateSettings(s);
       audioManager.setMusicMode("stealth");
+      this.syncAdaptiveCamera();
     };
     this.events.on(Phaser.Scenes.Events.RESUME, this.resumeHandler);
+
+    if (this.viewportHandler) {
+      window.removeEventListener("resize", this.viewportHandler);
+      window.visualViewport?.removeEventListener("resize", this.viewportHandler);
+    }
+    this.viewportHandler = () => this.syncAdaptiveCamera();
+    window.addEventListener("resize", this.viewportHandler);
+    window.visualViewport?.addEventListener("resize", this.viewportHandler);
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       if (this.resumeHandler) {
         this.events.off(Phaser.Scenes.Events.RESUME, this.resumeHandler);
         this.resumeHandler = undefined;
+      }
+      if (this.viewportHandler) {
+        window.removeEventListener("resize", this.viewportHandler);
+        window.visualViewport?.removeEventListener("resize", this.viewportHandler);
+        this.viewportHandler = undefined;
       }
       this.inputMgr.destroy();
       uiManager.clearHud();
@@ -1007,6 +1023,34 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     uiManager.updateHud(hud);
+  }
+
+  private syncAdaptiveCamera(): void {
+    if (!this.player) return;
+
+    const cam = this.cameras.main;
+    const viewportWidth = Math.max(1, window.visualViewport?.width ?? window.innerWidth);
+    const viewportHeight = Math.max(1, window.visualViewport?.height ?? window.innerHeight);
+    const aspect = viewportWidth / viewportHeight;
+    const compactViewport = aspect < 1.45;
+
+    if (!compactViewport) {
+      cam.stopFollow();
+      cam.setZoom(1);
+      cam.centerOn(this.level.world.width / 2, this.level.world.height / 2);
+      return;
+    }
+
+    const targetVisibleWidth = aspect < 0.9 ? 640 : 860;
+    const targetVisibleHeight = aspect < 0.9 ? 1100 : 760;
+    const zoomX = cam.width / targetVisibleWidth;
+    const zoomY = cam.height / targetVisibleHeight;
+    const zoom = Phaser.Math.Clamp(Math.max(zoomX, zoomY), 1.15, 2);
+
+    cam.setZoom(zoom);
+    cam.startFollow(this.player, true, 0.14, 0.14);
+    cam.setDeadzone(Math.round(cam.width * 0.26), Math.round(cam.height * 0.2));
+    cam.centerOn(this.player.x, this.player.y);
   }
 
   private breachLabel(): string {
