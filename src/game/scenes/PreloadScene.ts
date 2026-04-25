@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { COLORS, SCENE_KEYS } from "../constants";
+import { getServices } from "../utils/services";
 
 export class PreloadScene extends Phaser.Scene {
   private redraw?: () => void;
@@ -7,6 +8,7 @@ export class PreloadScene extends Phaser.Scene {
   constructor() { super(SCENE_KEYS.PRELOAD); }
 
   create(): void {
+    const reducedMotion = getServices(this).saveManager.getSettings().reducedMotion;
     let glow: Phaser.GameObjects.Arc;
     let title: Phaser.GameObjects.Text;
     let subtitle: Phaser.GameObjects.Text;
@@ -25,7 +27,9 @@ export class PreloadScene extends Phaser.Scene {
     };
 
     glow = this.add.circle(0, 0, 100, COLORS.player, 0.07);
-    this.tweens.add({ targets:glow, alpha:{from:0.04,to:0.14}, scale:{from:0.9,to:1.1}, duration:900, yoyo:true, repeat:-1 });
+    if (!reducedMotion) {
+      this.tweens.add({ targets:glow, alpha:{from:0.04,to:0.14}, scale:{from:0.9,to:1.1}, duration:900, yoyo:true, repeat:-1 });
+    }
 
     title = this.add.text(0, 0, "ECHO HEIST", {
       fontFamily:"Chakra Petch,sans-serif", fontSize:"42px", color:"#eef8ff"
@@ -41,10 +45,15 @@ export class PreloadScene extends Phaser.Scene {
     this.scale.on("resize", this.redraw, this);
 
     const p = { v:0 };
-    this.tweens.add({ targets:p, v:1, duration:720,
-      onUpdate: () => { fill.displayWidth = bw * p.v; },
-      onComplete: () => this.scene.start(SCENE_KEYS.MENU)
-    });
+    if (reducedMotion) {
+      fill.displayWidth = bw;
+      this.time.delayedCall(90, () => this.scene.start(SCENE_KEYS.MENU));
+    } else {
+      this.tweens.add({ targets:p, v:1, duration:720,
+        onUpdate: () => { fill.displayWidth = bw * p.v; },
+        onComplete: () => this.scene.start(SCENE_KEYS.MENU)
+      });
+    }
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       if (this.redraw) this.scale.off("resize", this.redraw, this);

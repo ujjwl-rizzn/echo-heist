@@ -4,11 +4,14 @@ import type {
   MainMenuHandlers, NoticeData, PauseHandlers, RewardPanelData,
   ResultHandlers, SaveData, SettingsData, SettingsHandlers
 } from "../types";
+import { markViewportMode } from "../utils/immersive";
 
 export class UIManager {
   private readonly screenRoot: HTMLElement;
   private readonly hudRoot:    HTMLElement;
   private readonly appShell:   HTMLElement;
+  private bannerTimer = 0;
+  private bannerFadeTimer = 0;
 
   constructor() {
     const s = document.getElementById("ui-screen-layer");
@@ -21,11 +24,19 @@ export class UIManager {
   }
 
   clearScreen(): void { this.screenRoot.innerHTML = ""; }
-  clearHud():    void { this.hudRoot.innerHTML    = ""; }
+  clearHud():    void {
+    window.clearTimeout(this.bannerTimer);
+    window.clearTimeout(this.bannerFadeTimer);
+    this.bannerTimer = 0;
+    this.bannerFadeTimer = 0;
+    this.hudRoot.innerHTML = "";
+  }
 
   applySettings(settings: SettingsData): void {
     const theme = COSMETIC_THEMES.find(t => t.id === settings.selectedTheme) ?? COSMETIC_THEMES[0]!;
     this.appShell.toggleAttribute("data-scanlines-off", !settings.showScanlines);
+    this.appShell.toggleAttribute("data-reduced-motion", settings.reducedMotion);
+    markViewportMode(this.appShell);
     this.appShell.style.setProperty("--primary",   theme.accent);
     this.appShell.style.setProperty("--secondary", theme.secondary);
   }
@@ -151,8 +162,12 @@ export class UIManager {
       ${state.breachLabel ? `<div class="hud-breach">${state.breachLabel}</div>` : ""}
     </div>
   </div>
-</div>`;
+</div>
+<div class="field-banner" data-field-banner hidden></div>
+<div class="field-hint" data-field-hint hidden></div>
+<div class="field-flash" data-field-flash></div>`;
     document.getElementById("hud-pause")?.addEventListener("click", onPause);
+    this.updateFieldHint(state.interactionHint);
   }
 
   updateHud(state: HudState): void {
@@ -170,6 +185,7 @@ export class UIManager {
     if (alerts) alerts.textContent = String(state.detections);
     if (creds)  creds.textContent  = String(state.credits);
     if (fill)   fill.style.width   = `${Math.round(state.echoCharge*100)}%`;
+    this.updateFieldHint(state.interactionHint);
 
     if (state.traceLabel) {
       if (!trace && mission) {
@@ -190,6 +206,43 @@ export class UIManager {
     } else {
       breach?.remove();
     }
+  }
+
+  updateFieldHint(text: string): void {
+    const hint = this.hudRoot.querySelector<HTMLElement>("[data-field-hint]");
+    if (!hint) return;
+    if (!text) {
+      hint.hidden = true;
+      hint.textContent = "";
+      return;
+    }
+    hint.textContent = text;
+    hint.hidden = false;
+  }
+
+  showFieldBanner(text: string, ms: number, reducedMotion: boolean): void {
+    const banner = this.hudRoot.querySelector<HTMLElement>("[data-field-banner]");
+    if (!banner) return;
+    window.clearTimeout(this.bannerTimer);
+    window.clearTimeout(this.bannerFadeTimer);
+    banner.textContent = text;
+    banner.hidden = false;
+    banner.classList.add("is-visible");
+    this.bannerTimer = window.setTimeout(() => {
+      if (reducedMotion) {
+        banner.hidden = true;
+        banner.classList.remove("is-visible");
+        return;
+      }
+      banner.classList.remove("is-visible");
+      this.bannerFadeTimer = window.setTimeout(() => { banner.hidden = true; }, 220);
+    }, ms);
+  }
+
+  setFieldAlarm(active: boolean): void {
+    this.hudRoot
+      .querySelector<HTMLElement>("[data-field-flash]")
+      ?.classList.toggle("active", active);
   }
 
   showPause(handlers: PauseHandlers): void {

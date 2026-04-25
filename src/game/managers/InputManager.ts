@@ -9,6 +9,7 @@ export class InputManager {
   private touchPointerId: number | null = null;
   private touchOrigin   = new Phaser.Math.Vector2();
   private touchVector   = new Phaser.Math.Vector2();
+  private touchRadius   = TOUCH_JOYSTICK_RADIUS;
   private interactQ  = false;
   private echoQ      = false;
   private pauseQ     = false;
@@ -90,8 +91,11 @@ export class InputManager {
     stealthBtn.addEventListener("pointerleave",  releaseS);
 
     joystick.addEventListener("pointerdown", e => {
+      const rect = joystick.getBoundingClientRect();
+      const knobRect = knob.getBoundingClientRect();
+      this.touchRadius = Math.max(24, Math.min(rect.width, rect.height) / 2 - Math.max(knobRect.width, knobRect.height) / 2 - 4);
       this.touchPointerId = e.pointerId;
-      this.touchOrigin.set(e.clientX, e.clientY);
+      this.touchOrigin.set(rect.left + rect.width / 2, rect.top + rect.height / 2);
       this.touchVector.set(0,0);
       joystick.setPointerCapture(e.pointerId);
     });
@@ -100,11 +104,11 @@ export class InputManager {
       if (e.pointerId !== this.touchPointerId) return;
       const dx = e.clientX - this.touchOrigin.x, dy = e.clientY - this.touchOrigin.y;
       const v  = new Phaser.Math.Vector2(dx, dy);
-      const len = Math.min(v.length(), TOUCH_JOYSTICK_RADIUS);
+      const len = Math.min(v.length(), this.touchRadius);
       if (len < TOUCH_DEAD_ZONE) { this.touchVector.set(0,0); knob.style.transform = ""; return; }
       v.normalize().scale(len);
       knob.style.transform = `translate(${v.x}px,${v.y}px)`;
-      this.touchVector.set(v.x / TOUCH_JOYSTICK_RADIUS, v.y / TOUCH_JOYSTICK_RADIUS);
+      this.touchVector.set(v.x / this.touchRadius, v.y / this.touchRadius);
       if (this.touchVector.lengthSq() > 1) this.touchVector.normalize();
     };
     this.ptrUp = (e: PointerEvent) => {

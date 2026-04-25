@@ -88,6 +88,16 @@ Checks that every room is traversable, no guard patrols clip through walls, and 
 
 ---
 
+## Mobile viewport smoke
+
+```bash
+npm run smoke:viewport
+```
+
+Checks that the phone-first fullscreen hooks, compact touch HUD CSS, DOM gameplay overlays, reduced-motion wiring, and portrait camera branches are still present.
+
+---
+
 ## Project layout
 
 ```
@@ -102,8 +112,9 @@ src/
     managers/     Audio, Input, Level, RewardedAd, Save, UI
     scenes/       Boot, Preload, MainMenu, LevelSelect, Tutorial,
                   Game, Pause, Results, Settings
-    utils/        services
+    utils/        services, immersive viewport helpers
 scripts/
+  check-viewport-contracts.mjs
   validate-levels.mjs
 ```
 

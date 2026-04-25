@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
 import type { LevelCardData } from "../types";
+import { requestImmersiveMode } from "../utils/immersive";
 import { getServices } from "../utils/services";
 
 export class LevelSelectScene extends Phaser.Scene {
@@ -16,7 +17,7 @@ export class LevelSelectScene extends Phaser.Scene {
                bestRank:best.bestRank, bestTimeMs:best.bestTimeMs };
     });
     uiManager.showLevelSelect(cards,
-      id => { audioManager.playUi(); this.scene.start(SCENE_KEYS.GAME, { levelId:id }); },
+      id => { audioManager.playUi(); void requestImmersiveMode(); this.scene.start(SCENE_KEYS.GAME, { levelId:id }); },
       ()  => { audioManager.playUi(); this.scene.start(SCENE_KEYS.MENU); }
     );
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => uiManager.clearScreen());

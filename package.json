@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "validate:levels": "tsx ./scripts/validate-levels.mjs"
+    "validate:levels": "tsx ./scripts/validate-levels.mjs",
+    "smoke:viewport": "node ./scripts/check-viewport-contracts.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

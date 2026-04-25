@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
+import { requestImmersiveMode } from "../utils/immersive";
 import { getServices } from "../utils/services";
 
 export class MainMenuScene extends Phaser.Scene {
@@ -20,7 +21,7 @@ export class MainMenuScene extends Phaser.Scene {
       const save = saveManager.getData();
       const defaultId = levels[Math.min(save.unlockedLevelOrder, levels.length - 1)]?.id ?? levels[0]?.id ?? "tutorial-split";
       uiManager.showMainMenu(save, {
-        onPlay:     () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.GAME, { levelId: defaultId }); },
+        onPlay:     () => { audioManager.playUi(); void requestImmersiveMode(); this.scene.start(SCENE_KEYS.GAME, { levelId: defaultId }); },
         onLevels:   () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.LEVEL_SELECT); },
         onHow:      () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.TUTORIAL); },
         onSettings: () => { audioManager.playUi(); this.scene.start(SCENE_KEYS.SETTINGS, { returnScene: SCENE_KEYS.MENU }); },
@@ -45,6 +46,7 @@ export class MainMenuScene extends Phaser.Scene {
 
   private drawBackdrop(): void {
     this.clearBackdrop();
+    const reducedMotion = getServices(this).saveManager.getSettings().reducedMotion;
     const { width, height } = this.scale;
     this.backdrop.push(this.add.rectangle(width/2, height/2, width, height, 0x050611, 1).setDepth(-20));
     for (let i = 0; i < 16; i++) {
@@ -53,7 +55,7 @@ export class MainMenuScene extends Phaser.Scene {
         Phaser.Math.Between(100, 240), 2,
         Phaser.Math.RND.pick([0x7ef6ff, 0xff3a88]), 0.14
       ).setAngle(Phaser.Math.Between(-35, 35)).setDepth(-10);
-      this.tweens.add({ targets: line, alpha:{from:0.06,to:0.2}, duration:900+i*70, yoyo:true, repeat:-1 });
+      if (!reducedMotion) this.tweens.add({ targets: line, alpha:{from:0.06,to:0.2}, duration:900+i*70, yoyo:true, repeat:-1 });
       this.backdrop.push(line);
     }
   }

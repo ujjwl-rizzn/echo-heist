@@ -11,7 +11,7 @@ import { InputManager } from "../managers/InputManager";
 import type {
   CameraData, ChannelState, CollectibleData, DoorData, EchoSample,
   GuardData, HudState, LaserData, LevelDefinition, LevelResult,
-  Point, PressurePlateData, Rect, ScoreBreakdownItem, SwitchData, TerminalData
+  Point, PressurePlateData, Rect, ScoreBreakdownItem, SettingsData, SwitchData, TerminalData
 } from "../types";
 import { getServices } from "../utils/services";
 
@@ -87,12 +87,9 @@ export class GameScene extends Phaser.Scene {
   private coreHalo!:     Phaser.GameObjects.Arc;
   private exitGlow!:     Phaser.GameObjects.Rectangle;
   private exitZone!:     Phaser.GameObjects.Rectangle;
-  private alarmFlash!:   Phaser.GameObjects.Rectangle;
   private logicOvl!:     Phaser.GameObjects.Graphics;
   private objOvl!:       Phaser.GameObjects.Graphics;
   private recTrail!:     Phaser.GameObjects.Graphics;
-  private hintLbl!:      Phaser.GameObjects.Text;
-  private bannerTxt!:    Phaser.GameObjects.Text;
   private ambLines:      Phaser.GameObjects.Rectangle[] = [];
 
   /* entity lists */
@@ -134,8 +131,9 @@ export class GameScene extends Phaser.Scene {
   private pulses:          Pulse[] = [];
   private state:           "active"|"compromised"|"complete" = "active";
   private stateMs =        0;
-  private bannerTimer =    0;
   private hudReady =       false;
+  private reducedMotion =  false;
+  private touchHints =     false;
   private resumeHandler?:  () => void;
   private viewportHandler?: () => void;
 
@@ -149,6 +147,8 @@ export class GameScene extends Phaser.Scene {
     const set  = saveManager.getSettings();
     const theme= COSMETIC_THEMES.find(t=>t.id===set.selectedTheme) ?? COSMETIC_THEMES[0]!;
     this.accentHex = theme.accentHex;
+    this.reducedMotion = set.reducedMotion;
+    this.touchHints = this.wantsTouchHints(set);
 
     audioManager.applySettings(set);
     audioManager.setMusicMode("stealth");
@@ -206,6 +206,8 @@ export class GameScene extends Phaser.Scene {
     }
     this.resumeHandler = () => {
       const s = saveManager.getSettings();
+      this.reducedMotion = s.reducedMotion;
+      this.touchHints = this.wantsTouchHints(s);
       audioManager.applySettings(s);
       uiManager.applySettings(s);
       this.inputMgr.updateSettings(s);
@@ -250,8 +252,7 @@ export class GameScene extends Phaser.Scene {
     this.detectCooldown  = Math.max(0, this.detectCooldown - dt);
     this.alarmFlashMs    = Math.max(0, this.alarmFlashMs   - dt);
     this.alarmMusicMs    = Math.max(0, this.alarmMusicMs   - dt);
-    this.alarmFlash.setAlpha(this.alarmFlashMs > 0 ? 0.18 : 0);
-    this.tickBanner(dt);
+    getServices(this).uiManager.setFieldAlarm(this.alarmFlashMs > 0);
     this.tickAmbient(dt);
 
     if (this.alarmMusicMs <= 0 && this.state === "active")
@@ -359,13 +360,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tickAmbient(_dt: number): void {
+    if (this.reducedMotion) {
+      this.ambLines.forEach(l => l.setAlpha(0.08));
+      return;
+    }
     const t = this.runMs*0.001;
     this.ambLines.forEach((l,i)=>l.setAlpha(0.06+(Math.sin(t+i*0.8)+1)*0.05));
   }
 
   private buildWorld(): void {
-    const {width,height} = this.level.world;
-
     /* walls */
     this.level.walls.forEach(w=>{
       const cx=w.x+w.w/2, cy=w.y+w.h/2;
@@ -468,23 +471,6 @@ export class GameScene extends Phaser.Scene {
     this.logicOvl = this.add.graphics().setDepth(4);
     this.objOvl   = this.add.graphics().setDepth(16);
     this.recTrail = this.add.graphics().setDepth(17);
-
-    /* hint label at bottom */
-    this.hintLbl = this.add.text(width/2,height-14,"",{
-      fontFamily:"Space Grotesk,sans-serif",fontSize:"14px",color:"#eef8ff",align:"center",
-      backgroundColor:"rgba(5,8,20,0.84)",padding:{x:18,y:10},
-      wordWrap:{width:Math.min(680,width-120),useAdvancedWrap:true}
-    }).setOrigin(0.5,1).setDepth(40).setAlpha(0);
-
-    /* brief banner at top */
-    this.bannerTxt = this.add.text(width/2,26,"",{
-      fontFamily:"Chakra Petch,sans-serif",fontSize:"14px",color:"#9cc9ff",
-      align:"center",wordWrap:{width:640,useAdvancedWrap:true}
-    }).setOrigin(0.5,0).setDepth(45).setAlpha(0);
-
-    /* alarm screen flash */
-    this.alarmFlash = this.add.rectangle(width/2,height/2,width,height,COLORS.danger,0.18)
-      .setDepth(50).setAlpha(0);
   }
 
   /* ── movement & collision ─────────────────────────────────────────────── */
@@ -851,8 +837,10 @@ export class GameScene extends Phaser.Scene {
     this.killEcho();
     getServices(this).audioManager.setMusicMode("alarm");
     getServices(this).audioManager.playAlarm();
-    this.cameras.main.shake(150,0.004);
-    this.cameras.main.flash(100,255,80,110,false);
+    if (!this.reducedMotion) {
+      this.cameras.main.shake(150,0.004);
+      this.cameras.main.flash(100,255,80,110,false);
+    }
     this.showBanner("DETECTED — Room resetting...",ALARM_DURATION_MS);
   }
 
@@ -861,14 +849,15 @@ export class GameScene extends Phaser.Scene {
     const {audioManager}=getServices(this);
     this.pickups.forEach(c=>{
       if(c.taken) return;
-      const pulse=0.92+(Math.sin(this.runMs*0.007+c.data.x*0.01)+1)*0.08;
+      const pulse=this.reducedMotion?1:0.92+(Math.sin(this.runMs*0.007+c.data.x*0.01)+1)*0.08;
       c.shape.setScale(pulse); c.glow.setScale(0.9+pulse*0.16);
       if(dist(c.data,this.pos)<=22){
         c.taken=true; c.shape.destroy(); c.glow.destroy();
         this.credits+=c.data.value; audioManager.playPickup();
         const lbl=this.add.text(c.data.x,c.data.y-6,`+${c.data.value}`,
           {fontFamily:"Chakra Petch,sans-serif",fontSize:"15px",color:"#ffd76f",fontStyle:"700"}).setOrigin(0.5).setDepth(26);
-        this.tweens.add({targets:lbl,y:c.data.y-32,alpha:0,duration:500,onComplete:()=>lbl.destroy()});
+        if (this.reducedMotion) this.time.delayedCall(260, () => lbl.destroy());
+        else this.tweens.add({targets:lbl,y:c.data.y-32,alpha:0,duration:500,onComplete:()=>lbl.destroy()});
       }
     });
   }
@@ -877,9 +866,9 @@ export class GameScene extends Phaser.Scene {
   private tickCoreExit(): void {
     const nearCore=!this.coreGot&&dist(this.level.core,this.pos)<=INTERACT_DISTANCE;
     const nearExit=this.coreGot&&overlaps(bodyRect(this.pos.x,this.pos.y),this.level.exit);
-    const pulse=0.08+Math.sin(this.runMs*0.008)*0.03;
-    const hPulse=1+Math.sin(this.runMs*0.006)*0.08;
-    const floatY=Math.sin(this.runMs*0.004)*2.4;
+    const pulse=this.reducedMotion?0.08:0.08+Math.sin(this.runMs*0.008)*0.03;
+    const hPulse=this.reducedMotion?1:1+Math.sin(this.runMs*0.006)*0.08;
+    const floatY=this.reducedMotion?0:Math.sin(this.runMs*0.004)*2.4;
 
     this.coreImg.setY(this.level.core.y+floatY);
     this.coreHalo.setY(this.level.core.y+floatY);
@@ -933,9 +922,8 @@ export class GameScene extends Phaser.Scene {
   /* ── hints ────────────────────────────────────────────────────────────── */
   private tickHints(): void {
     const h=this.buildHint();
+    if (h !== this.hint) getServices(this).uiManager.updateFieldHint(h);
     this.hint=h;
-    if(!h){this.hintLbl.setText("").setAlpha(0);return;}
-    this.hintLbl.setText(h).setAlpha(0.92);
   }
 
   private buildHint(): string {
@@ -945,13 +933,13 @@ export class GameScene extends Phaser.Scene {
       if(this.echo) return "Echo is holding the relay. Cross now — the camera is blind.";
       const pr=bodyRect(this.pos.x,this.pos.y);
       const pl=this.plates.find(p=>p.data.channel==="door-alpha");
-      if(pl&&overlaps(pr,pl.data)) return "You're on the plate, but only the echo can hold this relay. Step off, then press Q to deploy.";
-      if(this.recorded.length<12) return "Move to record a loop, then press Q to deploy the echo.";
-      return "End your loop on the cyan plate and press Q. Your clone holds the relay while you cross.";
+      if(pl&&overlaps(pr,pl.data)) return `You're on the plate, but only the echo can hold this relay. Step off, then ${this.echoAction()} to deploy.`;
+      if(this.recorded.length<12) return `Move to record a loop, then ${this.echoAction()} to deploy the echo.`;
+      return `End your loop on the cyan plate and ${this.echoAction()}. Your clone holds the relay while you cross.`;
     }
 
     if(!this.coreGot&&dist(this.pos,this.level.core)<=INTERACT_DISTANCE)
-      return `${this.level.payload.name} in range. Press E to steal it.`;
+      return `${this.level.payload.name} in range. ${this.interactAction()} to steal it.`;
 
     if(this.coreGot&&overlaps(bodyRect(this.pos.x,this.pos.y),this.level.exit))
       return "Exit gate open — move into it to escape.";
@@ -960,16 +948,30 @@ export class GameScene extends Phaser.Scene {
       return `${this.exposureSrc} — ${Math.round(this.exposureLevel*100)}%. Break line of sight now.`;
 
     const sw=this.switches.find(s=>dist(this.pos,s.data)<=INTERACT_DISTANCE);
-    if(sw) return `${sw.data.label}. Press E.`;
+    if(sw) return `${sw.data.label}. ${this.interactAction()}.`;
 
     const tm=this.terminals.find(t=>dist(this.pos,t.data)<=INTERACT_DISTANCE);
-    if(tm) return `${tm.data.label}. Press E to hack.`;
+    if(tm) return `${tm.data.label}. ${this.interactAction()} to hack.`;
 
     const rem=Object.entries(this.chTimers).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1])[0];
     if(rem) return this.coreGot?`Breach: ${(rem[1]/1000).toFixed(1)}s — get out.`:`Breach open: ${(rem[1]/1000).toFixed(1)}s — move fast.`;
 
     if(!this.coreGot) return this.level.tip;
     return `${this.level.payload.name} secured. Get to the exit gate.`;
+  }
+
+  private wantsTouchHints(settings: SettingsData): boolean {
+    if (settings.touchControls === "on") return true;
+    if (settings.touchControls === "off") return false;
+    return window.matchMedia("(pointer: coarse)").matches;
+  }
+
+  private interactAction(): string {
+    return this.touchHints ? "Tap Hack" : "Press E";
+  }
+
+  private echoAction(): string {
+    return this.touchHints ? "tap Echo" : "press Q";
   }
 
   /* ── overlays ─────────────────────────────────────────────────────────── */
@@ -1044,22 +1046,24 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const portraitViewport = aspect < 0.9;
-    const targetVisibleWidth = portraitViewport ? 720 : 920;
-    const targetVisibleHeight = portraitViewport ? 1040 : 760;
+    const phonePortrait = aspect < 0.72 && viewportWidth <= 620;
+    const tabletPortrait = aspect < 1;
+    const targetVisibleWidth = phonePortrait ? 620 : tabletPortrait ? 820 : 920;
+    const targetVisibleHeight = phonePortrait ? 840 : tabletPortrait ? 940 : 760;
     const zoomX = viewportWidth / targetVisibleWidth;
     const zoomY = viewportHeight / targetVisibleHeight;
+    const minimumPhoneZoom = phonePortrait ? 1.16 : fitZoom;
     const zoom = Phaser.Math.Clamp(
-      Math.max(zoomX, zoomY, fitZoom),
+      Math.max(zoomX, zoomY, fitZoom, minimumPhoneZoom),
       fitZoom,
-      portraitViewport ? 1.9 : 1.45
+      phonePortrait ? 2.05 : tabletPortrait ? 1.65 : 1.45
     );
 
     cam.setZoom(zoom);
     cam.startFollow(this.player, true, 0.14, 0.14);
     cam.setDeadzone(
-      Math.round(Math.min(viewportWidth * 0.3, this.level.world.width * 0.45)),
-      Math.round(Math.min(viewportHeight * 0.24, this.level.world.height * 0.38))
+      Math.round(Math.min(viewportWidth * (phonePortrait ? 0.22 : 0.3), this.level.world.width * 0.45)),
+      Math.round(Math.min(viewportHeight * (phonePortrait ? 0.18 : 0.24), this.level.world.height * 0.38))
     );
     cam.centerOn(this.player.x, this.player.y);
   }
@@ -1108,13 +1112,8 @@ export class GameScene extends Phaser.Scene {
 
   /* ── banner ───────────────────────────────────────────────────────────── */
   private showBanner(text: string, ms: number): void {
-    this.bannerTxt.setText(text).setAlpha(0.96);
-    window.clearTimeout(this.bannerTimer);
-    this.bannerTimer=window.setTimeout(()=>{
-      this.tweens.add({targets:this.bannerTxt,alpha:0,duration:600});
-    },ms);
+    getServices(this).uiManager.showFieldBanner(text, ms, this.reducedMotion);
   }
-  private tickBanner(_dt: number): void { /* managed by setTimeout+tween */ }
 
   /* ── draw helpers ─────────────────────────────────────────────────────── */
   private drawCone(g: Phaser.GameObjects.Graphics, ox: number, oy: number, angle: number, range: number, half: number, col: number): void {

@@ -1,8 +1,7 @@
 # ECHO HEIST — Setup Guide
 
 ## What's in this zip
-33 source files — a complete rewrite of the game.
-All bugs are fixed. All 8 levels are validated.
+This is the rebuilt ECHO HEIST project. Keep using the validation commands below after every change so fixes stay verified instead of assumed.
 
 ---
 
@@ -34,11 +33,13 @@ Run these commands ONE AT A TIME:
 
   npm.cmd install
   npm.cmd run validate:levels
+  npm.cmd run smoke:viewport
   npm.cmd run build
   npm.cmd run dev
 
 If all pass:
 - validate:levels prints "All 8 levels validated"
+- smoke:viewport prints "All viewport contracts passed"
 - build prints "built in Xms"
 - dev prints a local URL like http://localhost:5173
 
@@ -50,7 +51,7 @@ Open that URL in your browser and test the game.
 In PowerShell:
 
   git add -A
-  git commit -m "v1.1 - full rebuild, all bugs fixed"
+  git commit -m "improve mobile fullscreen and viewport polish"
   git push
 
 Vercel picks it up automatically and redeploys in ~2 minutes.

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { SCENE_KEYS } from "../constants";
+import { requestImmersiveMode } from "../utils/immersive";
 import { getServices } from "../utils/services";
 
 export class PauseScene extends Phaser.Scene {
@@ -10,6 +11,7 @@ export class PauseScene extends Phaser.Scene {
     audioManager.setMusicMode("menu");
     uiManager.showPause({
       onResume: () => {
+        void requestImmersiveMode();
         audioManager.playUi(); audioManager.setMusicMode("stealth");
         uiManager.clearScreen(); this.scene.stop(); this.scene.resume(SCENE_KEYS.GAME);
       },
