@@ -1035,10 +1035,15 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     const viewportWidth = Math.max(1, this.scale.width);
     const viewportHeight = Math.max(1, this.scale.height);
-    const aspect = viewportWidth / viewportHeight;
-    const fitZoom = Math.min(viewportWidth / this.level.world.width, viewportHeight / this.level.world.height);
+    const chrome = this.phoneViewportChrome(viewportWidth, viewportHeight);
+    const viewWidth = viewportWidth;
+    const viewHeight = Math.max(240, viewportHeight - chrome.top - chrome.bottom);
+    const aspect = viewWidth / viewHeight;
+    const fitZoom = Math.min(viewWidth / this.level.world.width, viewHeight / this.level.world.height);
 
-    if (aspect >= 1.18) {
+    cam.setViewport(0, chrome.top, viewWidth, viewHeight);
+
+    if (!chrome.compact && aspect >= 1.18) {
       cam.stopFollow();
       cam.setDeadzone(0, 0);
       cam.setZoom(fitZoom);
@@ -1046,26 +1051,44 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const phonePortrait = aspect < 0.72 && viewportWidth <= 620;
-    const tabletPortrait = aspect < 1;
-    const targetVisibleWidth = phonePortrait ? 620 : tabletPortrait ? 820 : 920;
-    const targetVisibleHeight = phonePortrait ? 840 : tabletPortrait ? 940 : 760;
-    const zoomX = viewportWidth / targetVisibleWidth;
-    const zoomY = viewportHeight / targetVisibleHeight;
-    const minimumPhoneZoom = phonePortrait ? 1.16 : fitZoom;
+    const phonePortrait = chrome.compact && viewportWidth <= 620;
+    const tabletPortrait = chrome.compact || aspect < 1;
+    const targetVisibleWidth = phonePortrait ? 640 : tabletPortrait ? 920 : 920;
+    const targetVisibleHeight = phonePortrait ? 760 : tabletPortrait ? 820 : 760;
+    const zoomX = viewWidth / targetVisibleWidth;
+    const zoomY = viewHeight / targetVisibleHeight;
+    const minimumPhoneZoom = phonePortrait ? 1.02 : fitZoom;
     const zoom = Phaser.Math.Clamp(
       Math.max(zoomX, zoomY, fitZoom, minimumPhoneZoom),
       fitZoom,
-      phonePortrait ? 2.05 : tabletPortrait ? 1.65 : 1.45
+      phonePortrait ? 1.55 : tabletPortrait ? 1.35 : 1.45
     );
 
     cam.setZoom(zoom);
     cam.startFollow(this.player, true, 0.14, 0.14);
     cam.setDeadzone(
-      Math.round(Math.min(viewportWidth * (phonePortrait ? 0.22 : 0.3), this.level.world.width * 0.45)),
-      Math.round(Math.min(viewportHeight * (phonePortrait ? 0.18 : 0.24), this.level.world.height * 0.38))
+      Math.round(Math.min(viewWidth * (phonePortrait ? 0.18 : 0.3), this.level.world.width * 0.45)),
+      Math.round(Math.min(viewHeight * (phonePortrait ? 0.16 : 0.24), this.level.world.height * 0.38))
     );
     cam.centerOn(this.player.x, this.player.y);
+  }
+
+  private phoneViewportChrome(width: number, height: number): { compact: boolean; top: number; bottom: number } {
+    const shell = document.getElementById("app-shell");
+    const compact = Boolean(shell?.hasAttribute("data-compact-touch")) && width / height < 0.95;
+    if (!compact) return { compact:false, top:0, bottom:0 };
+
+    const style = shell ? window.getComputedStyle(shell) : null;
+    const top = this.cssPx(style, "--phone-topbar", width <= 520 ? 58 : 64);
+    const bottom = this.cssPx(style, "--phone-deck", height >= 900 ? 218 : width <= 520 ? 198 : 212);
+    return { compact:true, top:Math.round(top), bottom:Math.round(bottom) };
+  }
+
+  private cssPx(style: CSSStyleDeclaration | null, property: string, fallback: number): number {
+    if (!style) return fallback;
+    const raw = style.getPropertyValue(property).trim();
+    const value = Number.parseFloat(raw);
+    return Number.isFinite(value) ? value : fallback;
   }
 
   private breachLabel(): string {

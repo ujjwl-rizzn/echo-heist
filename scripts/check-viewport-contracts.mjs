@@ -18,6 +18,8 @@ const checks = [
   ["DOM field banner overlay", files.css.includes(".field-banner") && files.ui.includes("showFieldBanner")],
   ["DOM alarm flash overlay", files.css.includes(".field-flash") && files.game.includes("setFieldAlarm")],
   ["actual joystick radius", files.input.includes("getBoundingClientRect") && files.input.includes("touchRadius")],
+  ["phone command deck", files.css.includes("--phone-deck") && files.css.includes(".touch-button--pause")],
+  ["reserved phone camera viewport", files.game.includes("phoneViewportChrome") && files.game.includes("cam.setViewport")],
   ["mobile hint copy", files.game.includes("Tap Hack") && files.game.includes("tap Echo")],
   ["reduced motion data attribute", files.css.includes("data-reduced-motion") && files.ui.includes("data-reduced-motion")],
   ["phone portrait camera branch", files.game.includes("phonePortrait") && files.game.includes("tabletPortrait")]

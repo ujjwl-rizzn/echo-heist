@@ -77,10 +77,10 @@ export class InputManager {
 
     const actions = mk("div", "touch-actions");
     actions.append(
-      this.mkBtn("Hack",   "primary",   () => { this.interactQ = true; }),
-      this.mkBtn("Echo",   "secondary", () => { this.echoQ     = true; }),
-      this.mkBtn("Stealth","",          () => undefined, true),
-      this.mkBtn("Pause",  "",          () => { this.pauseQ    = true; })
+      this.mkBtn("Hack",   "primary",   () => { this.interactQ = true; }, false, "hack"),
+      this.mkBtn("Echo",   "secondary", () => { this.echoQ     = true; }, false, "echo"),
+      this.mkBtn("Stealth","",          () => undefined, true, "stealth"),
+      this.mkBtn("Pause",  "",          () => { this.pauseQ    = true; }, false, "pause")
     );
 
     const stealthBtn = actions.children[2] as HTMLButtonElement;
@@ -136,9 +136,12 @@ export class InputManager {
     }
   }
 
-  private mkBtn(label: string, tone: string, onPress: () => void, hold = false): HTMLButtonElement {
+  private mkBtn(label: string, tone: string, onPress: () => void, hold = false, action = label.toLowerCase()): HTMLButtonElement {
     const b = document.createElement("button");
-    b.type = "button"; b.className = `touch-button ${tone}`.trim(); b.textContent = label;
+    b.type = "button";
+    b.className = `touch-button touch-button--${action} ${tone}`.trim();
+    b.dataset.action = action;
+    b.textContent = label;
     b.addEventListener("pointerdown", e => { e.preventDefault(); onPress(); });
     if (!hold) b.addEventListener("click", e => e.preventDefault());
     return b;
