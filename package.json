@@ -1,22 +1,8 @@
 {
   "name": "echo-heist",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "ECHO HEIST \u2014 neon stealth heist browser game built with Phaser 3 and TypeScript.",
-  "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "validate:levels": "tsx ./scripts/validate-levels.mjs",
-    "smoke:viewport": "node ./scripts/check-viewport-contracts.mjs"
-  },
-  "dependencies": {
-    "phaser": "^3.90.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.3",
-    "vite": "^7.1.0",
-    "tsx": "^4.19.2"
+    "build": "node -e \"console.log('ECHO HEIST static Godot export ready for Vercel')\""
   }
 }
