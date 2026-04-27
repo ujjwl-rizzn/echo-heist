@@ -1,0 +1,18 @@
+extends Node
+
+signal path_selected(path: String)
+signal level_loaded(level_id: int, path: String)
+signal level_completed(score: int, rank: String)
+signal level_failed(reason: String)
+signal guard_spotted_player(guard: Node2D, player: Node2D)
+signal guard_lost_player(guard: Node2D)
+signal alert_level_changed(new_level: int)
+signal player_takedown(target: Node2D, is_lethal: bool)
+signal player_used_item(item_name: String)
+signal objective_completed(obj_id: String)
+signal minigame_started(game_type: String)
+signal minigame_succeeded(game_type: String, attempts: int)
+signal minigame_failed(game_type: String)
+signal item_unlocked(item_id: String, source: String)
+signal score_popup(points: int, reason: String)
+signal tier_changed(old_tier: String, new_tier: String)

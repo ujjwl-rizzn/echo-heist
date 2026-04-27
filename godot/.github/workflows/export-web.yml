@@ -1,0 +1,49 @@
+name: Echo Heist Web Export
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  export-web:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare output
+        run: mkdir -p build/web
+
+      - name: Export Godot Web
+        run: godot --headless --export-release "Web" build/web/index.html
+
+      - name: Inject AdSense metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("build/web/index.html")
+          html = path.read_text(encoding="utf-8")
+          meta = '<meta name="google-adsense-account" content="ca-pub-6967018953057648">'
+          if meta not in html:
+              html = html.replace("<head>", "<head>\n" + meta, 1)
+          path.write_text(html, encoding="utf-8")
+          PY
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-heist-web
+          path: build/web/
+
+      - name: Deploy to itch.io
+        if: ${{ secrets.BUTLER_API_KEY != '' && secrets.ITCH_USER != '' }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          curl -L -o butler.zip https://broth.itch.ovh/butler/linux-amd64/LATEST/archive/default
+          unzip butler.zip
+          ./butler push build/web/ "${{ secrets.ITCH_USER }}/echo-heist:html5"
