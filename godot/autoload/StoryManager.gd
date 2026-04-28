@@ -1,53 +1,52 @@
+## StoryManager.gd — COMPLETE with ending_title() and ending_text()
 extends Node
 
-enum Ending {A_ECHO_PRESERVED, B_BOTH_BURN, C_UNITED, D_GHOST_FREE}
+enum Ending { A_ECHO_PRESERVED, B_BOTH_BURN, C_UNITED, D_GHOST_FREE }
 
 func determine_ending() -> Ending:
-	var f := GameState.flags
-	if GameState.current_path == GameState.PATH_SPY:
-		return _spy_ending(f)
-	return _crime_ending(f)
+	var f: Dictionary = GameState.flags
+	var path: String = GameState.current_path
+	return _spy_ending(f) if path == GameState.PATH_SPY else _crime_ending(f)
+
+func _spy_ending(f: Dictionary) -> Ending:
+	var sc: String = str(f.get("server_choice", ""))
+	var saw_origin: bool = bool(f.get("found_own_origin", false))
+	var doubted: bool = bool(f.get("nova_doubted", false))
+	var took_key: bool = bool(f.get("took_master_key", false))
+	if sc == "run" and saw_origin and doubted and took_key: return Ending.D_GHOST_FREE
+	if sc == "copy_destroy":                                return Ending.C_UNITED
+	if sc == "destroy" and not doubted:                    return Ending.A_ECHO_PRESERVED
+	return Ending.B_BOTH_BURN
+
+func _crime_ending(f: Dictionary) -> Ending:
+	var vc: String = str(f.get("vanta_choice", ""))
+	var sparks: String = str(f.get("sparks_status", "gone"))
+	var lot7: bool = bool(f.get("lot7_found", false))
+	var nova_id: bool = bool(f.get("saw_nova_donor", false))
+	if vc == "copy"   and sparks == "gone" and lot7:  return Ending.D_GHOST_FREE
+	if vc == "expose" and nova_id:                    return Ending.C_UNITED
+	if vc == "burn"   and sparks == "ally":           return Ending.A_ECHO_PRESERVED
+	return Ending.B_BOTH_BURN
 
 func ending_title() -> String:
 	match determine_ending():
-		Ending.A_ECHO_PRESERVED:
-			return "ENDING A // ECHO PRESERVED"
-		Ending.B_BOTH_BURN:
-			return "ENDING B // BOTH BURN"
-		Ending.C_UNITED:
-			return "ENDING C // UNITED"
-		Ending.D_GHOST_FREE:
-			return "ENDING D // GHOST FREE"
-	return "ENDING B // BOTH BURN"
+		Ending.A_ECHO_PRESERVED: return "ENDING A // ECHO PRESERVED"
+		Ending.B_BOTH_BURN:      return "ENDING B // BOTH BURN"
+		Ending.C_UNITED:         return "ENDING C // UNITED"
+		Ending.D_GHOST_FREE:     return "ENDING D // GHOST FREE"
+	return "ENDING UNKNOWN"
 
 func ending_text() -> String:
 	match determine_ending():
 		Ending.A_ECHO_PRESERVED:
-			return "The system survives. The city keeps breathing data into machines that never blink."
+			return "The system survives. A new operative begins training tomorrow.\nThe city exhales. The data flows. Nothing changed."
 		Ending.B_BOTH_BURN:
-			return "The truth burns with the server. VANTA is wounded. Nobody wins clean."
+			return "The server room burns. The data is ash.\nVANTA is crippled. NOVA goes silent. Both operatives vanish.\nThe city carries the weight of a secret no one will ever tell."
 		Ending.C_UNITED:
-			return "Two ghosts trade truth for truth. Same enemy. One breach."
+			return "Kael-7 and Rin stand on opposite sides of the same truth.\nThey share everything. The world learns the name ECHO HEIST.\nIt costs them everything. It was worth it."
 		Ending.D_GHOST_FREE:
-			return "No handlers. No broker. No name. Somewhere in the city, a ghost becomes a person."
-	return ""
+			return "No broadcast. No exposure. No war.\nTwo ghosts move through the city freely.\nNeither knows the other made the same choice.\nThe world thinks they vanished. They did."
+	return "The city moves on. It always does."
 
-func _spy_ending(f: Dictionary) -> Ending:
-	var choice := str(f.get("server_choice", "destroy"))
-	if choice == "run" and bool(f.get("found_own_origin", false)) and bool(f.get("nova_doubted", false)):
-		return Ending.D_GHOST_FREE
-	if choice == "copy_destroy":
-		return Ending.C_UNITED
-	if choice == "destroy" and not bool(f.get("nova_doubted", false)):
-		return Ending.A_ECHO_PRESERVED
-	return Ending.B_BOTH_BURN
-
-func _crime_ending(f: Dictionary) -> Ending:
-	var choice := str(f.get("vanta_choice", "burn"))
-	if choice == "copy" and str(f.get("sparks_status", "gone")) == "gone" and bool(f.get("lot7_found", false)):
-		return Ending.D_GHOST_FREE
-	if choice == "expose" and bool(f.get("saw_nova_donor", false)):
-		return Ending.C_UNITED
-	if choice == "burn" and str(f.get("sparks_status", "gone")) == "ally":
-		return Ending.A_ECHO_PRESERVED
-	return Ending.B_BOTH_BURN
+func get_ending_scene_path() -> String:
+	return "res://scenes/endings/ending_%s.tscn" % ["a","b","c","d"][determine_ending()]
